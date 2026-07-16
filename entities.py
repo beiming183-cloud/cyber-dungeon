@@ -63,14 +63,15 @@ class Entity:
         if hasattr(self, 'char_type') and self.char_type == "bio_berserker":
             amount = int(amount * 0.85)  # 减免15%
 
-        # 生存天赋的伤害减免（只对玩家生效）
-        if hasattr(self, 'talent') and self.talent == "survival":
-            amount = int(amount * 0.8)  # 减免20%
+        # 天赋和装备提供的通用伤害减免（只对玩家生效）
+        if hasattr(self, 'damage_reduction'):
+            amount = int(amount * (1 - max(0.0, min(0.75, self.damage_reduction))))
 
         # 如果有防护盾，减少伤害（只对玩家生效）
-        if hasattr(self, 'available_passives') and 'shield' in self.available_passives and \
-                self.available_passives['shield']['level'] > 0:
-            reduction = self.available_passives['shield']['reduction'][self.available_passives['shield']['level']]
+        if hasattr(self, 'passive_skills') and 'shield' in self.passive_skills and \
+                self.passive_skills['shield']['level'] > 0:
+            shield_level = self.passive_skills['shield']['level']
+            reduction = self.available_passives['shield']['reduction'][shield_level]
             amount = int(amount * (1 - reduction))
 
         self.hp -= amount
@@ -138,8 +139,8 @@ class Player(Entity):
             self.speed = 5
             self.max_hp = 100
             self.hp = 100
-            self.image = VisualUtils.create_emoji_surface("🧙‍♂️", CYAN, 48)
-            self.weapon_img = VisualUtils.create_emoji_surface("🦯", YELLOW, 32)
+            self.image = VisualUtils.create_character_icon(self.char_type, CYAN, 48)
+            self.weapon_img = VisualUtils.create_weapon_icon(self.char_type, YELLOW, 32)
             # 技能CD和伤害调整
             self.skills = [
                 {"key": "1", "name": "爆裂火球", "cd": 30, "cur": 0, "color": ORANGE, "icon": "🔥", "type": "pyro_orb",
@@ -162,8 +163,8 @@ class Player(Entity):
             self.speed = 7
             self.max_hp = 80
             self.hp = 80
-            self.image = VisualUtils.create_emoji_surface("🏹", GREEN, 48)
-            self.weapon_img = VisualUtils.create_emoji_surface("🔫", GREEN, 32)
+            self.image = VisualUtils.create_character_icon(self.char_type, GREEN, 48)
+            self.weapon_img = VisualUtils.create_weapon_icon(self.char_type, GREEN, 32)
             # 技能CD和伤害调整
             self.skills = [
                 {"key": "1", "name": "速射突袭", "cd": 24, "cur": 0, "color": GREEN, "icon": "🔫", "type": "rapid_fire",
@@ -183,8 +184,8 @@ class Player(Entity):
             self.speed = 4
             self.max_hp = 150
             self.hp = 150
-            self.image = VisualUtils.create_emoji_surface("⚔️", RED, 48)
-            self.weapon_img = VisualUtils.create_emoji_surface("🗡️", RED, 32)
+            self.image = VisualUtils.create_character_icon(self.char_type, RED, 48)
+            self.weapon_img = VisualUtils.create_weapon_icon(self.char_type, RED, 32)
             # 技能CD和伤害调整
             self.skills = [
                 {"key": "1", "name": "旋风斩", "cd": 32, "cur": 0, "color": RED, "icon": "🌀", "type": "cyclone_slash",
@@ -204,8 +205,8 @@ class Player(Entity):
             self.speed = 8
             self.max_hp = 90
             self.hp = 90
-            self.image = VisualUtils.create_emoji_surface("🥷", (100, 50, 150), 48)
-            self.weapon_img = VisualUtils.create_emoji_surface("🗡️", (150, 100, 200), 32)
+            self.image = VisualUtils.create_character_icon(self.char_type, (100, 50, 150), 48)
+            self.weapon_img = VisualUtils.create_weapon_icon(self.char_type, (150, 100, 200), 32)
             # 技能CD和伤害调整
             self.skills = [
                 {"key": "1", "name": "暗影突袭", "cd": 28, "cur": 0, "color": (100, 50, 150), "icon": "💨", "type": "shadow_dash",
@@ -225,8 +226,8 @@ class Player(Entity):
             self.speed = 4.5
             self.max_hp = 180
             self.hp = 180
-            self.image = VisualUtils.create_emoji_surface("🛡️", YELLOW, 48)
-            self.weapon_img = VisualUtils.create_emoji_surface("⚔️", YELLOW, 32)
+            self.image = VisualUtils.create_character_icon(self.char_type, YELLOW, 48)
+            self.weapon_img = VisualUtils.create_weapon_icon(self.char_type, YELLOW, 32)
             # 技能CD和伤害调整
             self.skills = [
                 {"key": "1", "name": "圣盾猛击", "cd": 38, "cur": 0, "color": YELLOW, "icon": "🛡️", "type": "shield_bash",
@@ -324,37 +325,30 @@ class Player(Entity):
         return None
 
     def _apply_talent(self):
-        """应用天赋效果 - 初始技能完全随机选择"""
+        """应用具有明确构筑方向的初始天赋。"""
         # 确保 available_passives 已初始化
         if not hasattr(self, 'available_passives') or not self.available_passives:
             return
         
-        # 可选的初始技能列表（排除immortal_heart，它应该通过升级获得）
-        available_starting_skills = ['orbs', 'shield', 'auto_attack', 'chain_lightning', 
-                                     'freeze_mine', 'boomerang', 'decoy', 'gravity_field', 
-                                     'bounce_shield']
-        
-        # 完全随机选择，不再按天赋类型分组
-        random_skill = random.choice(available_starting_skills)
-        
         if self.talent == 'combat':
-            # 战斗天赋：完全随机获得一个被动技能
-            if random_skill in self.available_passives:
-                self.passive_skills[random_skill] = {'level': 1, 'name': self.available_passives[random_skill]['name']}
-                print(f"[随机] 战斗天赋已激活：{self.available_passives[random_skill]['name']} Lv.1")
+            skill_id = 'auto_attack'
+            self.passive_skills[skill_id] = {'level': 1, 'name': self.available_passives[skill_id]['name']}
+            self.damage_buff = 0.08
+            print("[天赋] 火力协议：自动攻击 Lv.1，伤害+8%")
         elif self.talent == 'survival':
-            # 生存天赋：完全随机获得一个被动技能，受到伤害减少20%
-            if random_skill in self.available_passives:
-                self.passive_skills[random_skill] = {'level': 1, 'name': self.available_passives[random_skill]['name']}
-                print(f"[随机] 生存天赋已激活：{self.available_passives[random_skill]['name']} Lv.1，伤害减免+20%")
-            self.damage_reduction = 0.2  # 20%伤害减免
+            skill_id = 'shield'
+            self.passive_skills[skill_id] = {'level': 1, 'name': self.available_passives[skill_id]['name']}
+            self.damage_reduction = 0.12
+            self.max_hp = int(self.max_hp * 1.15)
+            self.hp = self.max_hp
+            print("[天赋] 稳态装甲：防护盾 Lv.1，生命+15%，减伤12%")
         elif self.talent == 'exploration':
-            # 探索天赋：完全随机获得一个被动技能，金币掉落率提升50%，怪物经验值增加20%
-            if random_skill in self.available_passives:
-                self.passive_skills[random_skill] = {'level': 1, 'name': self.available_passives[random_skill]['name']}
-                print(f"[随机] 探索天赋已激活：{self.available_passives[random_skill]['name']} Lv.1，金币+50%，经验+20%")
-            self.coin_bonus = 0.5  # 50%额外金币
-            self.exp_bonus = 0.2  # 20%额外经验
+            skill_id = 'orbs'
+            self.passive_skills[skill_id] = {'level': 1, 'name': self.available_passives[skill_id]['name']}
+            self.coin_bonus = 0.25
+            self.exp_bonus = 0.10
+            self.extra_chests = 1
+            print("[天赋] 寻宝协议：环绕光球 Lv.1，额外宝箱+1，金币+25%")
     
     def apply_immortal_heart(self):
         """应用无敌之心技能效果"""
@@ -647,6 +641,7 @@ class Enemy(Entity):
         icon, color, speed, hp, damage, behavior = cfgs.get(kind, cfgs['goblin'])
         self.kind = kind
         self.is_elite = is_elite  # 精英怪标记
+        self.is_wave_enemy = False
 
         # 精英怪增强
         if is_elite:
@@ -662,7 +657,12 @@ class Enemy(Entity):
         self.color = color
         self.speed = speed
         self.hp = self.max_hp = hp
-        self.image = VisualUtils.create_emoji_surface(icon, color, 50 if is_elite else 40)
+        if kind == 'dragon':
+            center = self.rect.center
+            self.rect.size = (96, 96)
+            self.rect.center = center
+        icon_size = 96 if kind == 'dragon' else 50 if is_elite else 40
+        self.image = VisualUtils.create_enemy_icon(kind, color, icon_size, is_elite)
         self.damage = damage
         self.behavior = behavior
         self.anim_frame = 0  # 动画帧
@@ -681,6 +681,9 @@ class Enemy(Entity):
         self.stun_timer = 0
         self.slow_timer = 0
         self.slow_factor = 0.6
+        self.boss_phase = 1
+        self.boss_attack_timer = 0
+        self.boss_dash_timer = 0
 
     def ai_move(self, target, tiles):
         # 增强的AI行为
@@ -703,15 +706,30 @@ class Enemy(Entity):
                 # 缓慢型 - 更低速度
                 speed_mult = 0.6
             elif self.behavior == 'boss':
-                # Boss型 - 中等速度但更聪明
-                speed_mult = 0.9
-                # Boss会稍微预测玩家位置
-                if dist > 100:
+                health_ratio = self.hp / max(1, self.max_hp)
+                self.boss_phase = 1 if health_ratio > 0.66 else 2 if health_ratio > 0.33 else 3
+                self.boss_attack_timer += 1
+                if self.boss_attack_timer >= max(120, 250 - self.boss_phase * 35):
+                    self.boss_attack_timer = 0
+                    self.boss_dash_timer = 26
+
+                if self.boss_phase == 1 and dist > 100:
+                    speed_mult = 0.82
                     predict_x = target.rect.centerx + target.vx * 10
                     predict_y = target.rect.centery + target.vy * 10
                     dx = predict_x - self.rect.centerx
                     dy = predict_y - self.rect.centery
                     dist = math.hypot(dx, dy)
+                elif self.boss_phase == 2:
+                    speed_mult = 1.0
+                    dx, dy = dx - dy * 0.55, dy + dx * 0.55
+                    dist = math.hypot(dx, dy)
+                else:
+                    speed_mult = 1.28
+
+                if self.boss_dash_timer > 0:
+                    self.boss_dash_timer -= 1
+                    speed_mult *= 1.85
             else:
                 speed_mult = 0.8  # 普通敌人也降低速度
 
@@ -840,7 +858,12 @@ class Enemy(Entity):
         if self.behavior == 'boss' or self.is_elite:
             # Boss/精英怪光环
             pulse_radius = 3 + math.sin(math.radians(self.pulse)) * 2
-            VisualUtils.draw_aura(surface, cx, cy, self.color, 25, pulse_radius)
+            aura_radius = 58 if self.behavior == 'boss' else 25
+            VisualUtils.draw_aura(surface, cx, cy, self.color, aura_radius, pulse_radius)
+            if self.behavior == 'boss':
+                phase_color = YELLOW if self.boss_phase == 1 else ORANGE if self.boss_phase == 2 else RED
+                phase_radius = 48 + self.boss_phase * 7 + math.sin(math.radians(self.pulse * 3)) * 4
+                pygame.draw.circle(surface, phase_color, (cx, cy), int(phase_radius), 2 + self.boss_phase // 2)
 
             # 精英怪标记 - 金色Boss特殊标记
             if self.is_elite:
@@ -849,8 +872,8 @@ class Enemy(Entity):
                     golden_glow = pygame.Surface((60, 60), pygame.SRCALPHA)
                     pygame.draw.circle(golden_glow, (*YELLOW[:3], 150), (30, 30), 30)
                     surface.blit(golden_glow, (cx - 30, cy - 30))
-                    elite_text = FONT_M.render("👑", True, YELLOW)
-                    surface.blit(elite_text, (cx - 15, cy - 40))
+                    crown = [(cx - 14, cy - 35), (cx - 8, cy - 45), (cx, cy - 37), (cx + 8, cy - 45), (cx + 14, cy - 35)]
+                    pygame.draw.lines(surface, YELLOW, False, crown, 3)
                 else:
                     elite_text = FONT_S.render("★", True, YELLOW)
                     surface.blit(elite_text, (cx - 10, cy - 30))
@@ -885,7 +908,7 @@ class Enemy(Entity):
         # 绘制本体 - 增强版
         # 敌人发光效果
         if self.behavior == 'boss':
-            glow_size = 50
+            glow_size = 112
         elif self.behavior == 'aggressive':
             glow_size = 45
         else:
@@ -1034,7 +1057,7 @@ class Item:
         surface.blit(glow_surf, (cx - glow_size, cy - glow_size))
 
         # 绘制图标
-        icon_surf = VisualUtils.create_emoji_surface(self.config[item_type]['icon'], color, 40)
+        icon_surf = VisualUtils.create_item_icon(item_type, color, 40)
         surface.blit(icon_surf, (cx - 20, cy - 20))
 
     def apply_effect(self, player):
@@ -1058,6 +1081,7 @@ class TreasureChest:
         self.pulse = 0
         self.bob_offset = 0
         self.opened = False
+        self.reward_type = 'coins'
         
     def update(self):
         # 脉冲动画
@@ -1077,7 +1101,7 @@ class TreasureChest:
         surface.blit(glow_surf, (cx - glow_size, cy - glow_size))
         
         # 绘制宝箱图标
-        icon_surf = VisualUtils.create_emoji_surface("💎", YELLOW, 50)
+        icon_surf = VisualUtils.create_chest_icon(YELLOW, 50)
         surface.blit(icon_surf, (cx - 25, cy - 25))
         
         # 绘制闪光效果
@@ -1177,7 +1201,7 @@ class Projectile:
         self.pulse = 0  # 脉冲
 
         # 子弹图像
-        self.image = VisualUtils.create_emoji_surface(skill_data.get('icon', '•'), self.color, 24)
+        self.image = VisualUtils.create_skill_icon(self.skill_type, self.color, 24)
 
     def update(self):
         # 记录轨迹
@@ -1405,4 +1429,3 @@ class Projectile:
             # 默认 - 圆形
             pygame.draw.circle(surface, self.color, (int(cx), int(cy)), 6)
             pygame.draw.circle(surface, WHITE, (int(cx), int(cy)), 3)
-

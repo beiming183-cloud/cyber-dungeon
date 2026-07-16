@@ -30,6 +30,7 @@ class Game:
         self.items = []  # 道具列表
         self.skill_selection_active = False  # 技能选择界面
         self.skill_selection_options = []  # 技能选择选项
+        self.skill_selection_index = 0
         self.skill_editor_active = False  # 技能编辑器界面（后门）
         self.skill_editor_selected_index = 0  # 当前选中的技能索引
         self.game_paused = False  # 游戏暂停状态
@@ -74,6 +75,13 @@ class Game:
         self.total_elite_kills = 0  # 精英怪击杀数
         self.total_skill_uses = 0  # 技能使用次数
         self.new_achievements = []
+        self.feedback_messages = []
+        self.upgrade_charge = 0
+        self.upgrade_charge_required = 2
+        self.skill_choices_made = 0
+        self.chests_opened = 0
+        self.objective_chests_total = 0
+        self.boss_wave = False
 
         # 波次挑战模式
         self.wave_mode = True  # 默认启用波次模式
@@ -81,7 +89,7 @@ class Game:
         self.wave_enemies_count = 0  # 本波敌人总数
         self.wave_enemies_killed = 0  # 本波已击杀敌人数量
         self.wave_cooldown = 0  # 波次间隔冷却时间
-        self.wave_cooldown_max = 180  # 波次间隔3秒（60fps × 3）
+        self.wave_cooldown_max = 300  # 波次间隔5秒，给探索和观察留出空间
         self.wave_active = False  # 当前波次是否激活
 
         # 角色选择相关
@@ -123,6 +131,7 @@ class Game:
             }
         ]
         self.selected_char = 'cyber_mage'  # 默认选择赛博法师
+        self.char_selection_index = 0
 
         # 初始天赋选择相关
         self.talent_options = [
@@ -131,24 +140,25 @@ class Game:
                 'name': '战斗天赋',
                 'emoji': '⚔️',
                 'color': ORANGE,
-                'desc': '随机获得一个被动技能'
+                'desc': '初始：自动攻击\n全局伤害 +8%\n适合主动进攻'
             },
             {
                 'type': 'survival',
                 'name': '生存天赋',
                 'emoji': '🛡️',
                 'color': BLUE,
-                'desc': '随机获得一个被动技能\n受到伤害减少20%'
+                'desc': '初始：防护盾\n最大生命 +15%\n受到伤害 -12%'
             },
             {
                 'type': 'exploration',
                 'name': '探索天赋',
                 'emoji': '💰',
                 'color': YELLOW,
-                'desc': '随机获得一个被动技能\n金币掉落率+50%\n经验值+20%'
+                'desc': '初始：环绕光球\n额外宝箱 +1\n金币收益 +25%'
             }
         ]
         self.selected_talent = 'combat'  # 默认选择战斗天赋
+        self.talent_selection_index = 0
 
     def init_game_world(self, map_num=None):
         if map_num is not None:
@@ -189,44 +199,41 @@ class Game:
         self.shop_active = False  # 重置商店激活状态
         self.player_pos_before_shop = None  # 重置位置保存
         self.player_pos_before_skill_selection = None  # 重置技能选择位置保存
+        self.feedback_messages = []
+        self.upgrade_charge = 0
+        self.upgrade_charge_required = 2
+        self.skill_choices_made = 0
+        self.chests_opened = 0
         
         # 重置波次状态
         self.wave_active = False
         self.wave_enemies_count = 0
         self.wave_enemies_killed = 0
         self.current_wave = 0
-        self.prepare_next_wave(immediate=True)
+        self.prepare_next_wave(immediate=False)
         
         # 根据地图编号调整敌人数量和强度
         map_multiplier = 1.0 + (self.current_map - 1) * 0.5  # 每张地图增加50%强度
-        base_enemy_count = 5 + self.current_map * 2  # 基础敌人数量随地图增加
-        
-        # 在其他房间生成敌人 - 更多种类
-        enemy_types = ['goblin', 'slime', 'bat', 'skeleton', 'demon', 'ghost', 'spider']
-        boss_room = random.choice(self.rooms[1:]) if len(self.rooms) > 1 else None
+        # 房间内只保留少量游荡敌人，主要压力由波次逐渐建立。
+        enemy_types = ['goblin', 'slime', 'bat']
+        if self.current_map > 1:
+            enemy_types.extend(['skeleton', 'ghost', 'spider'])
         self.map_enemy_count = 0
+        ambient_enemy_limit = 2 + max(0, self.current_map - 1) * 2
 
         for room in self.rooms[1:]:
-            if random.random() < 0.7:
-                # 随机选择敌人类型
-                if room == boss_room and not self.boss_spawned:
-                    # Boss房间 - 只在最后生成Boss
-                    kind = 'dragon'
-                    self.boss_spawned = True
-                else:
-                    kind = random.choice(enemy_types)
-
-                # 每个房间可能生成多个敌人，随地图增加
-                if kind == 'dragon':
-                    enemy_count = 1
-                else:
-                    enemy_count = random.randint(1, 2 + self.current_map // 2)
+            if self.map_enemy_count >= ambient_enemy_limit:
+                break
+            if random.random() < min(0.42, 0.18 + self.current_map * 0.05):
+                kind = random.choice(enemy_types)
+                enemy_count = 1 if self.current_map == 1 else random.randint(1, 2)
                     
                 for _ in range(enemy_count):
+                    if self.map_enemy_count >= ambient_enemy_limit:
+                        break
                     ex = (room.x + random.randint(1, room.width - 1)) * TILE_SIZE
                     ey = (room.y + random.randint(1, room.height - 1)) * TILE_SIZE
-                    # 10%概率生成精英怪
-                    is_elite = random.random() < 0.1
+                    is_elite = random.random() < (0.02 if self.current_map == 1 else 0.06)
                     enemy = Enemy(ex, ey, kind, is_elite)
                     
                     # 根据地图编号增强敌人
@@ -239,9 +246,39 @@ class Game:
                     self.enemies.append(enemy)
                     self.map_enemy_count += 1
 
-        # 开局立即生成第一波敌人
-        if self.wave_mode:
-            self.spawn_wave_enemies()
+        self.spawn_exploration_chests()
+        self.add_feedback("跟随指引寻找能量宝箱，首波将在数秒后抵达", UI_PRIMARY, 300)
+
+    def spawn_exploration_chests(self):
+        """在远离出生点的房间放置探索目标。"""
+        if len(self.rooms) <= 1:
+            return
+        start = self.rooms[0].center
+        candidates = sorted(
+            self.rooms[1:],
+            key=lambda room: abs(room.centerx - start[0]) + abs(room.centery - start[1]),
+            reverse=True,
+        )
+        chest_count = min(len(candidates), 3 + getattr(self.player, 'extra_chests', 0))
+        pool = candidates[:max(chest_count * 2, chest_count)]
+        selected_rooms = random.sample(pool, chest_count) if len(pool) >= chest_count else pool
+        for index, room in enumerate(selected_rooms):
+            chest = TreasureChest(room.centerx * TILE_SIZE, room.centery * TILE_SIZE)
+            chest.reward_type = ('coins', 'recovery', 'charge')[index % 3]
+            self.treasure_chests.append(chest)
+        self.objective_chests_total = len(self.treasure_chests)
+
+    def add_feedback(self, text, color=WHITE, duration=150):
+        self.feedback_messages.append({'text': text, 'color': color, 'timer': duration})
+        self.feedback_messages = self.feedback_messages[-4:]
+
+    def gain_upgrade_charge(self, amount, reason):
+        if self.skill_selection_active:
+            return
+        self.upgrade_charge += amount
+        self.add_feedback(f"构筑能量 +{amount}  {reason}", UI_ACCENT, 150)
+        if self.upgrade_charge >= self.upgrade_charge_required:
+            self.show_skill_selection()
 
     def handle_input(self):
         """处理玩家输入"""
@@ -269,7 +306,7 @@ class Game:
                 continue
             
             # 处理移动相关的键盘事件（支持中文键盘）- 只在游戏状态下处理，且编辑器未激活
-            if self.state == "GAME" and not self.skill_editor_active and hasattr(self, 'player') and self.player:
+            if self.state == "GAME" and not self.skill_editor_active and not self.skill_selection_active and hasattr(self, 'player') and self.player:
                 if event.type == pygame.KEYDOWN:
                     # 向上移动
                     if event.key == pygame.K_w or event.key == pygame.K_UP:
@@ -320,6 +357,8 @@ class Game:
                         self.state = "CHAR_SELECT"
                     elif self.state == "GAMEOVER":
                         self.state = "CHAR_SELECT"
+                    elif self.state == "CHAR_SELECT":
+                        self.state = "TALENT_SELECT"
                     elif self.state == "TALENT_SELECT" and self.selected_talent:
                         # 天赋选择完成后进入游戏
                         self.init_game_world()
@@ -327,33 +366,34 @@ class Game:
 
                 # 角色选择状态 - 键盘选择
                 elif self.state == "CHAR_SELECT":
-                    if event.key == pygame.K_1:
-                        self.selected_char = 'cyber_mage'
+                    if event.key in (pygame.K_LEFT, pygame.K_a):
+                        self.char_selection_index = (self.char_selection_index - 1) % len(self.char_options)
+                        self.selected_char = self.char_options[self.char_selection_index]['type']
+                    elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                        self.char_selection_index = (self.char_selection_index + 1) % len(self.char_options)
+                        self.selected_char = self.char_options[self.char_selection_index]['type']
+                    elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                         self.state = "TALENT_SELECT"
-                    elif event.key == pygame.K_2:
-                        self.selected_char = 'mech_ranger'
-                        self.state = "TALENT_SELECT"
-                    elif event.key == pygame.K_3:
-                        self.selected_char = 'bio_berserker'
-                        self.state = "TALENT_SELECT"
-                    elif event.key == pygame.K_4:
-                        self.selected_char = 'shadow_assassin'
-                        self.state = "TALENT_SELECT"
-                    elif event.key == pygame.K_5:
-                        self.selected_char = 'holy_knight'
-                        self.state = "TALENT_SELECT"
+                    elif pygame.K_1 <= event.key <= pygame.K_5:
+                        self.char_selection_index = event.key - pygame.K_1
+                        self.selected_char = self.char_options[self.char_selection_index]['type']
                     elif event.key == pygame.K_ESCAPE:
                         self.state = "MENU"
 
                 # 天赋选择状态
                 elif self.state == "TALENT_SELECT":
-                    # 键盘选择
-                    if event.key == pygame.K_1:
-                        self.selected_talent = 'combat'
-                    elif event.key == pygame.K_2:
-                        self.selected_talent = 'survival'
-                    elif event.key == pygame.K_3:
-                        self.selected_talent = 'exploration'
+                    if event.key in (pygame.K_LEFT, pygame.K_a):
+                        self.talent_selection_index = (self.talent_selection_index - 1) % len(self.talent_options)
+                        self.selected_talent = self.talent_options[self.talent_selection_index]['type']
+                    elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                        self.talent_selection_index = (self.talent_selection_index + 1) % len(self.talent_options)
+                        self.selected_talent = self.talent_options[self.talent_selection_index]['type']
+                    elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        self.init_game_world()
+                        self.state = "GAME"
+                    elif pygame.K_1 <= event.key <= pygame.K_3:
+                        self.talent_selection_index = event.key - pygame.K_1
+                        self.selected_talent = self.talent_options[self.talent_selection_index]['type']
                     elif event.key == pygame.K_ESCAPE:
                         self.state = "CHAR_SELECT"
 
@@ -491,7 +531,13 @@ class Game:
 
                     # 技能选择界面
                     elif self.skill_selection_active:
-                        if event.key == pygame.K_1 and len(self.skill_selection_options) > 0:
+                        if event.key in (pygame.K_LEFT, pygame.K_a):
+                            self.skill_selection_index = (self.skill_selection_index - 1) % len(self.skill_selection_options)
+                        elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                            self.skill_selection_index = (self.skill_selection_index + 1) % len(self.skill_selection_options)
+                        elif event.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER):
+                            self.select_skill(self.skill_selection_index)
+                        elif event.key == pygame.K_1 and len(self.skill_selection_options) > 0:
                             self.select_skill(0)
                         elif event.key == pygame.K_2 and len(self.skill_selection_options) > 1:
                             self.select_skill(1)
@@ -506,6 +552,7 @@ class Game:
                     for i, char in enumerate(self.char_options):
                         box_rect = self.get_character_card_rect(i)
                         if box_rect.collidepoint(mx, my):
+                            self.char_selection_index = i
                             self.selected_char = char['type']
                             self.state = "TALENT_SELECT"
                             break  # 找到匹配的角色后退出循环 event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:  # 左键点击
@@ -514,6 +561,7 @@ class Game:
                     for i, talent in enumerate(self.talent_options):
                         option_rect = self.get_talent_card_rect(i)
                         if option_rect.collidepoint(mx, my):
+                            self.talent_selection_index = i
                             self.selected_talent = talent['type']
                     start_rect = pygame.Rect(SCREEN_WIDTH // 2 - 180, 735, 360, 60)
                     if start_rect.collidepoint(mx, my) and self.selected_talent:
@@ -593,15 +641,15 @@ class Game:
         self.wave_enemies_count = 0
         self.wave_enemies_killed = 0
 
-        # 根据波次计算敌人数量和强度（减少数量增长，增加强度）
-        base_enemies = 5 + int(self.current_wave * 1.2)  # 减少敌人数量增长
-        elite_chance = min(0.5, 0.05 + self.current_wave * 0.04)  # 增加精英怪概率
+        self.boss_wave = self.current_wave % 5 == 0
+        # 前几波保持小规模，之后以强度和组合变化为主。
+        base_enemies = 1 if self.boss_wave else min(11, 3 + int((self.current_wave - 1) * 0.75))
 
         enemy_types = ['goblin', 'slime', 'bat', 'skeleton', 'demon', 'ghost', 'spider']
         # 高波次增加更强的敌人
-        if self.current_wave >= 3:  # 提前引入更强敌人
+        if self.current_wave >= 4:
             enemy_types.extend(['demon', 'ghost', 'skeleton'])  # 增加更强敌人出现频率
-        if self.current_wave >= 7:  # 更高级波次增加更多精英敌人
+        if self.current_wave >= 8:
             enemy_types.extend(['demon', 'ghost'])  # 进一步增加强力敌人
 
         # 计算这一波的敌人总数
@@ -617,7 +665,7 @@ class Game:
             self.wave_active = True
 
             enemy_types = ['goblin', 'slime', 'bat', 'skeleton', 'demon', 'ghost', 'spider']
-            elite_chance = min(0.3, 0.05 + self.current_wave * 0.02)
+            elite_chance = min(0.16, 0.02 + self.current_wave * 0.012)
 
             target_count = max(1, self.wave_enemies_count)
             spawned = 0
@@ -641,12 +689,22 @@ class Game:
                 grid_x = int(spawn_x // TILE_SIZE)
                 grid_y = int(spawn_y // TILE_SIZE)
                 if 0 <= grid_y < len(self.tiles) and 0 <= grid_x < len(self.tiles[0]) and self.tiles[grid_y][grid_x] == 0:
-                    kind = random.choice(enemy_types)
-                    is_elite = random.random() < elite_chance
+                    kind = 'dragon' if self.boss_wave and spawned == 0 else random.choice(enemy_types)
+                    is_elite = False if kind == 'dragon' else random.random() < elite_chance
                     enemy = Enemy(spawn_x, spawn_y, kind, is_elite)
+                    enemy.is_wave_enemy = True
+
+                    if kind == 'dragon':
+                        boss_scale = 1.0 + (self.current_wave // 5 - 1) * 0.35 + (self.current_map - 1) * 0.4
+                        enemy.hp = int(700 * boss_scale)
+                        enemy.max_hp = enemy.hp
+                        enemy.damage = int(28 * boss_scale)
+                        enemy.speed = 1.25 + min(0.45, self.current_wave * 0.02)
+                        self.boss_spawned = True
+                        self.add_feedback("警告：深渊龙王已苏醒", UI_DANGER, 240)
 
                     # 波次越高，敌人越强
-                    if self.current_wave > 1:
+                    if self.current_wave > 1 and kind != 'dragon':
                         enemy.hp = int(enemy.hp * (1 + (self.current_wave - 1) * 0.15))
                         enemy.damage = int(enemy.damage * (1 + (self.current_wave - 1) * 0.12))
 
@@ -666,8 +724,17 @@ class Game:
 
             # 如果由于障碍导致没有生成敌人，直接进入下一波
             if spawned == 0:
-                fallback_enemy = Enemy(self.player.rect.centerx + 80, self.player.rect.centery, random.choice(enemy_types), False)
-                if self.current_wave > 1:
+                fallback_kind = 'dragon' if self.boss_wave else random.choice(enemy_types)
+                fallback_enemy = Enemy(self.player.rect.centerx + 220, self.player.rect.centery, fallback_kind, False)
+                fallback_enemy.is_wave_enemy = True
+                if fallback_kind == 'dragon':
+                    boss_scale = 1.0 + (self.current_wave // 5 - 1) * 0.35 + (self.current_map - 1) * 0.4
+                    fallback_enemy.hp = int(700 * boss_scale)
+                    fallback_enemy.damage = int(28 * boss_scale)
+                    fallback_enemy.max_hp = fallback_enemy.hp
+                    self.boss_spawned = True
+                    self.add_feedback("警告：深渊龙王已苏醒", UI_DANGER, 240)
+                elif self.current_wave > 1:
                     fallback_enemy.hp = int(fallback_enemy.hp * (1 + (self.current_wave - 1) * 0.15))
                     fallback_enemy.damage = int(fallback_enemy.damage * (1 + (self.current_wave - 1) * 0.12))
                     fallback_enemy.max_hp = fallback_enemy.hp
@@ -988,6 +1055,10 @@ class Game:
         self.camera.shake(6)
 
     def update(self):
+        for message in self.feedback_messages:
+            message['timer'] -= 1
+        self.feedback_messages = [message for message in self.feedback_messages if message['timer'] > 0]
+
         # 技能选择或商店激活时，暂停游戏逻辑更新（但敌人和玩家都不更新）
         if self.state == "GAME" and not self.game_paused and not self.skill_selection_active and not self.skill_editor_active:
             # 根据游戏速度更新
@@ -1276,12 +1347,7 @@ class Game:
                         # 检查是否是金色Boss
                         if hasattr(e, 'is_golden_boss') and e.is_golden_boss:
                             self.golden_bosses_killed += 1
-                            # 金色Boss掉落更多奖励
-                            self.player.coins += 200 * self.current_map
-                            self.player.exp += 100 * self.current_map
-                            # 金色Boss死亡后掉落宝箱（不需要再检查数量，直接掉落）
-                            chest = TreasureChest(e.rect.centerx, e.rect.centery)
-                            self.treasure_chests.append(chest)
+                            self.player.coins += 40 * self.current_map
                         # 精英怪掉落随机道具
                         if random.random() < 0.7:  # 70%概率掉落道具
                             item_types = ['health', 'mana', 'damage_boost', 'defense_boost', 'exp_orb']
@@ -1290,24 +1356,24 @@ class Game:
                     # 检查是否是Boss
                     if e.kind == 'dragon':
                         self.boss_defeated = True
-                        # Boss掉落大量金币和经验
-                        self.player.coins += 500 * self.current_map
-                        self.player.exp += 200 * self.current_map
+                        self.player.coins += 180 * self.current_map
+                        self.player.exp += 120 * self.current_map
+                        boss_chest = TreasureChest(e.rect.centerx, e.rect.centery)
+                        boss_chest.reward_type = 'boss'
+                        self.treasure_chests.append(boss_chest)
+                        self.gain_upgrade_charge(2, "Boss 击破")
+                        self.add_feedback("Boss 已击破，战利品宝箱已出现", UI_ACCENT, 240)
                     
                     self.enemies.remove(e)
                     self.total_kills += 1  # 增加总击杀数
                     self.enemies_killed_this_map += 1  # 当前地图击杀数
                     # 增加波次内击杀计数
-                    if self.wave_mode and self.wave_active:
+                    if self.wave_mode and self.wave_active and getattr(e, 'is_wave_enemy', False):
                         self.wave_enemies_killed += 1
                     
                     # 检查是否所有敌人（包括Boss）都被击败
                     if len([e for e in self.enemies if e.alive]) == 0:
-                        if self.boss_defeated:
-                            # Boss被击败，如果商店未开启则开启商店
-                            if not self.shop_active:
-                                self.shop_active = True
-                        elif self.enemies_killed_this_map >= self.map_enemy_count * 0.8:
+                        if not self.wave_mode and self.enemies_killed_this_map >= self.map_enemy_count * 0.8:
                             # 击败80%的敌人后生成Boss
                             if not self.boss_spawned:
                                 # 在随机房间生成Boss
@@ -1330,32 +1396,15 @@ class Game:
                     base_exp = 20 * (2 if e.is_elite else 1)
 
                     # 应用探索天赋加成
-                    if hasattr(self.player, 'talent') and self.player.talent == "exploration":
-                        coins = int(base_coins * 1.5)  # 50%额外金币
-                        exp = int(base_exp * 1.2)  # 20%额外经验
-                    else:
-                        coins = base_coins
-                        exp = base_exp
+                    coins = int(base_coins * (1 + getattr(self.player, 'coin_bonus', 0.0)))
+                    exp = int(base_exp * (1 + getattr(self.player, 'exp_bonus', 0.0)))
 
                     self.player.coins += coins
                     self.player.exp += exp
 
-            # 精英怪死亡，触发技能选择（检查是否所有技能都满级）
+            # 精英怪提供构筑能量，积满后才触发技能选择。
             if elite_killed:
-                # 检查是否还有可以升级的技能
-                has_upgradeable = False
-                for skill_id, skill_data in self.player.available_passives.items():
-                    if skill_id in self.player.passive_skills:
-                        if self.player.passive_skills[skill_id]['level'] < skill_data['max_level']:
-                            has_upgradeable = True
-                            break
-                    else:
-                        has_upgradeable = True
-                        break
-                
-                # 只有当有可升级技能时才显示选择界面
-                if has_upgradeable:
-                    self.show_skill_selection()
+                self.gain_upgrade_charge(1, "精英击破")
 
             # 更新道具
             for item in self.items[:]:
@@ -1364,7 +1413,9 @@ class Game:
                     self.items.remove(item)
                 # 检查玩家与道具的碰撞
                 elif item.rect.colliderect(self.player.rect):
-                    item.apply_effect(self.player)
+                    result = item.apply_effect(self.player)
+                    if result:
+                        self.add_feedback(result, UI_PRIMARY, 140)
                     self.items.remove(item)
             
             # 更新宝箱
@@ -1373,8 +1424,26 @@ class Game:
                 # 检查玩家与宝箱的碰撞
                 if chest.rect.colliderect(self.player.rect) and not chest.opened:
                     chest.opened = True
-                    # 标记商店可用，但不强制进入
+                    reward_type = getattr(chest, 'reward_type', 'coins')
+                    if reward_type == 'recovery':
+                        heal = int(self.player.max_hp * 0.35)
+                        self.player.hp = min(self.player.max_hp, self.player.hp + heal)
+                        reward_text = f"恢复生命 {heal}"
+                    elif reward_type == 'charge':
+                        self.gain_upgrade_charge(1, "探索宝箱")
+                        reward_text = "获得 1 点构筑能量"
+                    elif reward_type == 'boss':
+                        reward = 220 * self.current_map
+                        self.player.coins += reward
+                        self.gain_upgrade_charge(1, "Boss 战利品")
+                        reward_text = f"Boss 战利品：金币 {reward}"
+                    else:
+                        reward = 80 * self.current_map
+                        self.player.coins += reward
+                        reward_text = f"获得金币 {reward}"
+                    self.chests_opened += 1
                     self.shop_available = True
+                    self.add_feedback(f"宝箱开启：{reward_text}", UI_ACCENT, 210)
                     self.treasure_chests.remove(chest)
 
             # 检查成就
@@ -1382,24 +1451,29 @@ class Game:
 
             # 波次系统逻辑
             if self.wave_mode:
-                # 如果当前没有激活波次但已经准备好数据，立即生成新一波
+                # 波间倒计时是真实的探索和喘息时间。
                 if not self.wave_active and self.wave_enemies_count > 0:
-                    self.spawn_wave_enemies()
+                    if self.wave_cooldown > 0:
+                        self.wave_cooldown -= 1
+                    else:
+                        self.spawn_wave_enemies()
 
                 # 检查是否完成当前波次
                 if self.wave_active and self.wave_enemies_killed >= self.wave_enemies_count:
                     # 波次完成奖励
-                    wave_reward = 100 * self.current_wave
+                    wave_reward = 35 + 15 * self.current_wave
                     self.player.coins += wave_reward
-                    self.player.exp += 50 * self.current_wave
+                    self.player.exp += 20 + 10 * self.current_wave
+                    self.add_feedback(f"波次完成：金币 +{wave_reward}", GREEN, 180)
+                    if self.current_wave % 2 == 0 and not self.boss_wave:
+                        self.gain_upgrade_charge(1, "连续作战")
 
                     # 添加完成特效
                     for _ in range(30):
                         self.particles.append(Particle(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2, GREEN, 'spark'))
 
                     # 准备下一波
-                    self.prepare_next_wave(immediate=True)
-                    self.spawn_wave_enemies()
+                    self.prepare_next_wave(immediate=False)
             else:
                 # 原始的怪物生成系统 - 随时间生成
                 self.enemy_spawn_timer += 1
@@ -1557,6 +1631,7 @@ class Game:
         if self.player_pos_before_skill_selection is None:
             self.player_pos_before_skill_selection = (self.player.rect.x, self.player.rect.y)
         self.skill_selection_active = True
+        self.skill_selection_index = 0
 
         # 统计已拥有的被动技能数量（排除0级的）
         owned_skills_count = sum(1 for skill_id in self.player.passive_skills 
@@ -1596,6 +1671,7 @@ class Game:
 
         # 创建选择选项（最多3个）
         self.skill_selection_options = []
+        random.shuffle(upgradeable_skills)
 
         # 优先显示可升级的技能
         for skill_id in upgradeable_skills[:2]:
@@ -1654,10 +1730,10 @@ class Game:
 
         enemy_types = ['goblin', 'slime', 'bat', 'skeleton', 'demon', 'ghost', 'spider']
 
-        # 随时间增加数量，并且随地图增加（无上限增长，初始也更高）
-        base_spawn = 8 + int(self.game_time / 400)  # 时间增速显著提升
-        map_bonus = max(0, (self.current_map - 1) * 5)  # 每张地图额外+5
-        spawn_count = max(10, base_spawn + map_bonus)  # 至少10只，随后无上限增长
+        # 普通模式同样采用缓慢爬坡，避免一次刷出十几只怪。
+        base_spawn = 1 + int(self.game_time / 1800)
+        map_bonus = max(0, self.current_map - 1)
+        spawn_count = min(6, base_spawn + map_bonus)
 
         for _ in range(spawn_count):
             # 在玩家周围随机位置生成
@@ -1677,9 +1753,9 @@ class Game:
                 if self.tiles[grid_y][grid_x] == 0:  # 地板
                     kind = random.choice(enemy_types)
                     # 随时间增加精英怪概率，随地图增加
-                    base_elite_chance = 0.05 + self.game_time / 18000
-                    map_elite_bonus = (self.current_map - 1) * 0.05
-                    elite_chance = min(0.4, base_elite_chance + map_elite_bonus)
+                    base_elite_chance = 0.02 + self.game_time / 72000
+                    map_elite_bonus = (self.current_map - 1) * 0.025
+                    elite_chance = min(0.16, base_elite_chance + map_elite_bonus)
                     is_elite = random.random() < elite_chance
                     enemy = Enemy(spawn_x, spawn_y, kind, is_elite)
                     # 根据地图增强
@@ -1711,6 +1787,11 @@ class Game:
             elif option['type'] == 'upgrade':
                 # 升级技能
                 self.player.passive_skills[skill_id]['level'] += 1
+
+            self.upgrade_charge = max(0, self.upgrade_charge - self.upgrade_charge_required)
+            self.skill_choices_made += 1
+            self.upgrade_charge_required = min(5, 2 + self.skill_choices_made // 2)
+            self.add_feedback(f"构筑完成：{option['name']}", option['color'], 180)
 
             self.skill_selection_active = False
             self.skill_selection_options = []
@@ -1818,62 +1899,66 @@ class Game:
 
     def draw_skill_selection(self):
         """绘制技能选择界面"""
-        # 半透明背景
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 200))
+        overlay.fill((3, 5, 10, 225))
         self.screen.blit(overlay, (0, 0))
 
-        # 标题
-        title = FONT_L.render("选择技能升级", True, YELLOW)
-        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 150))
-        self.screen.blit(title, title_rect)
+        title = FONT_TITLE.render("选择构筑升级", True, WHITE)
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 116)))
+        charge = FONT_XS.render(
+            f"构筑能量已充满  ·  第 {self.skill_choices_made + 1} 次选择",
+            True,
+            UI_ACCENT,
+        )
+        self.screen.blit(charge, charge.get_rect(center=(SCREEN_WIDTH // 2, 168)))
 
-        # 绘制选项
-        option_width = 300
-        option_height = 200
-        spacing = 50
+        option_width = 330
+        option_height = 300
+        spacing = 36
         total_width = len(self.skill_selection_options) * option_width + (
                     len(self.skill_selection_options) - 1) * spacing
         start_x = (SCREEN_WIDTH - total_width) // 2
 
         for i, option in enumerate(self.skill_selection_options):
             x = start_x + i * (option_width + spacing)
-            y = SCREEN_HEIGHT // 2 - option_height // 2
+            y = 245
+            selected = i == self.skill_selection_index
+            option_rect = pygame.Rect(x, y, option_width, option_height)
+            draw_panel(self.screen, option_rect, option['color'], selected)
 
-            # 选项背景
-            option_surf = pygame.Surface((option_width, option_height), pygame.SRCALPHA)
-            pygame.draw.rect(option_surf, UI_BG, option_surf.get_rect(), border_radius=15)
-            pygame.draw.rect(option_surf, option['color'], option_surf.get_rect(), 3, border_radius=15)
-            self.screen.blit(option_surf, (x, y))
+            draw_keycap(self.screen, str(i + 1), (x + 34, y + 32), selected)
+            status = "升级" if option['type'] == 'upgrade' else "新技能"
+            status_text = FONT_XS.render(status.upper(), True, option['color'])
+            self.screen.blit(status_text, (option_rect.right - status_text.get_width() - 20, y + 24))
 
-            # 按键提示
-            key_text = FONT_M.render(f"[{i + 1}]", True, WHITE)
-            self.screen.blit(key_text, (x + 20, y + 20))
+            icon_surf = VisualUtils.create_skill_icon(option['skill_id'], option['color'], 72)
+            self.screen.blit(icon_surf, icon_surf.get_rect(center=(option_rect.centerx, y + 96)))
 
-            # 技能图标
-            icon_surf = VisualUtils.create_emoji_surface(option['icon'], option['color'], 60)
-            self.screen.blit(icon_surf, (x + option_width // 2 - 30, y + 50))
-
-            # 技能名称
-            name_text = FONT_M.render(option['name'], True, option['color'])
-            name_rect = name_text.get_rect(center=(x + option_width // 2, y + 120))
+            name_text = FONT_CARD.render(option['name'], True, option['color'])
+            name_rect = name_text.get_rect(center=(option_rect.centerx, y + 160))
             self.screen.blit(name_text, name_rect)
 
-            # 描述
-            desc_text = FONT_S.render(option['desc'], True, WHITE)
-            desc_rect = desc_text.get_rect(center=(x + option_width // 2, y + 160))
-            self.screen.blit(desc_text, desc_rect)
+            draw_wrapped_text(
+                self.screen,
+                option['desc'],
+                FONT_XS,
+                WHITE,
+                (x + 28, y + 198, option_width - 56, 60),
+                line_gap=7,
+                max_lines=3,
+            )
 
-            # 如果是升级，显示当前等级
             if option['type'] == 'upgrade':
-                level_text = FONT_S.render(f"当前: Lv.{option['current_level']}", True, GRAY)
-                level_rect = level_text.get_rect(center=(x + option_width // 2, y + 180))
+                level_text = FONT_XS.render(
+                    f"Lv.{option['current_level']}  →  Lv.{option['current_level'] + 1}",
+                    True,
+                    UI_MUTED,
+                )
+                level_rect = level_text.get_rect(center=(option_rect.centerx, option_rect.bottom - 28))
                 self.screen.blit(level_text, level_rect)
 
-        # 提示文字
-        hint = FONT_S.render("按数字键选择技能", True, WHITE)
-        hint.set_alpha(abs(math.sin(pygame.time.get_ticks() * 0.005)) * 255)
-        hint_rect = hint.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 100))
+        hint = FONT_XS.render("← / → 或 A / D 切换    SPACE / ENTER 确认    1-3 快速选择", True, UI_MUTED)
+        hint_rect = hint.get_rect(center=(SCREEN_WIDTH // 2, 640))
         self.screen.blit(hint, hint_rect)
     
     def draw_skill_editor(self):
@@ -1933,7 +2018,7 @@ class Game:
                 self.screen.blit(highlight, (panel_x + 20, y_pos))
             
             # 技能图标
-            icon_surf = VisualUtils.create_emoji_surface(skill_data['icon'], skill_data['color'], 40)
+            icon_surf = VisualUtils.create_skill_icon(skill_id, skill_data['color'], 40)
             self.screen.blit(icon_surf, (panel_x + 30, y_pos + 10))
             
             # 技能名称和等级
@@ -2056,7 +2141,7 @@ class Game:
                 self.screen.blit(highlight, (panel_x, y_pos))
             
             # 物品图标
-            icon_surf = VisualUtils.create_emoji_surface(item['icon'], YELLOW, 40)
+            icon_surf = VisualUtils.create_skill_icon(item.get('type', item['name']), YELLOW, 40)
             self.screen.blit(icon_surf, (panel_x + 20, y_pos + 10))
             
             # 物品名称
@@ -2150,7 +2235,7 @@ class Game:
         for skill in self.player.skills:
             skill_y = y_offset
             # 技能图标
-            icon_surf = VisualUtils.create_emoji_surface(skill.get('icon', '•'), skill.get('color', WHITE), 30)
+            icon_surf = VisualUtils.create_skill_icon(skill.get('type', skill.get('name')), skill.get('color', WHITE), 30)
             self.screen.blit(icon_surf, (60, skill_y))
             
             # 技能名称和按键
@@ -2175,7 +2260,7 @@ class Game:
                 if level > 0:
                     skill_y = y_offset
                     # 技能图标
-                    icon_surf = VisualUtils.create_emoji_surface(skill_data.get('icon', '•'), skill_data.get('color', WHITE), 30)
+                    icon_surf = VisualUtils.create_skill_icon(skill_id, skill_data.get('color', WHITE), 30)
                     self.screen.blit(icon_surf, (60, skill_y))
                     
                     # 技能名称和等级
@@ -2331,7 +2416,7 @@ class Game:
                 key_surf = FONT_XS.render(str(skill_key), True, WHITE)
                 
                 # 技能图标
-                icon_surf = VisualUtils.create_emoji_surface(skill_icon, color_tuple, 40)
+                icon_surf = VisualUtils.create_skill_icon(skill.get('type', skill_name), color_tuple, 40)
                 self.screen.blit(icon_surf, (bx + 5, by + 5))
 
                 # 文字信息 - 调整位置确保在屏幕内
@@ -2394,6 +2479,17 @@ class Game:
             shop_hint = FONT_XS.render("B  打开商店", True, UI_ACCENT)
             self.screen.blit(shop_hint, (info_rect.left + 16, info_rect.bottom + 34))
 
+        charge_rect = pygame.Rect(14, 132, 284, 46)
+        draw_panel(self.screen, charge_rect, UI_ACCENT, False)
+        charge_label = FONT_XS.render("构筑能量", True, UI_MUTED)
+        charge_value = FONT_XS.render(f"{self.upgrade_charge} / {self.upgrade_charge_required}", True, UI_ACCENT)
+        self.screen.blit(charge_label, (charge_rect.left + 12, charge_rect.top + 6))
+        self.screen.blit(charge_value, (charge_rect.right - charge_value.get_width() - 12, charge_rect.top + 6))
+        charge_bg = pygame.Rect(charge_rect.left + 12, charge_rect.bottom - 12, charge_rect.width - 24, 5)
+        pygame.draw.rect(self.screen, (45, 48, 58), charge_bg, border_radius=3)
+        charge_ratio = min(1.0, self.upgrade_charge / max(1, self.upgrade_charge_required))
+        pygame.draw.rect(self.screen, UI_ACCENT, (charge_bg.x, charge_bg.y, int(charge_bg.width * charge_ratio), 5), border_radius=3)
+
         # 3. 角色专属被动显示
         if self.player.character_passive:
             passive_rect = pygame.Rect(SCREEN_WIDTH - 258, 14, 244, 42)
@@ -2418,6 +2514,64 @@ class Game:
                     level_text = FONT_XS.render(f"Lv.{level}", True, skill_data['color'])
                     self.screen.blit(level_text, (slot_rect.left + 42, slot_rect.top + 8))
                     passive_y += 40
+
+        self.draw_objective_guidance()
+        self.draw_feedback_messages()
+
+    def draw_objective_guidance(self):
+        boss = next((enemy for enemy in self.enemies if enemy.alive and enemy.behavior == 'boss'), None)
+        objective_y = 106
+        if boss:
+            bar_rect = pygame.Rect(SCREEN_WIDTH // 2 - 280, objective_y, 560, 42)
+            draw_panel(self.screen, bar_rect, UI_DANGER, True)
+            label = FONT_XS.render("深渊龙王", True, UI_DANGER)
+            value = FONT_XS.render(f"{int(boss.hp)} / {int(boss.max_hp)}", True, WHITE)
+            self.screen.blit(label, (bar_rect.left + 14, bar_rect.top + 7))
+            self.screen.blit(value, (bar_rect.right - value.get_width() - 14, bar_rect.top + 7))
+            hp_bg = pygame.Rect(bar_rect.left + 14, bar_rect.bottom - 11, bar_rect.width - 28, 5)
+            pygame.draw.rect(self.screen, (50, 38, 45), hp_bg, border_radius=3)
+            ratio = max(0.0, min(1.0, boss.hp / max(1, boss.max_hp)))
+            pygame.draw.rect(self.screen, UI_DANGER, (hp_bg.x, hp_bg.y, int(hp_bg.width * ratio), 5), border_radius=3)
+            objective_y += 50
+
+        nearest = None
+        if self.treasure_chests:
+            nearest = min(
+                self.treasure_chests,
+                key=lambda chest: math.hypot(chest.x - self.player.rect.centerx, chest.y - self.player.rect.centery),
+            )
+
+        if nearest:
+            dx = nearest.x - self.player.rect.centerx
+            dy = nearest.y - self.player.rect.centery
+            distance = max(1, int(math.hypot(dx, dy) / TILE_SIZE))
+            angle = math.atan2(dy, dx)
+            arrow_center = (SCREEN_WIDTH // 2 - 176, objective_y + 21)
+            tip = (arrow_center[0] + math.cos(angle) * 11, arrow_center[1] + math.sin(angle) * 11)
+            left = (arrow_center[0] + math.cos(angle + 2.5) * 8, arrow_center[1] + math.sin(angle + 2.5) * 8)
+            right = (arrow_center[0] + math.cos(angle - 2.5) * 8, arrow_center[1] + math.sin(angle - 2.5) * 8)
+            guide_rect = pygame.Rect(SCREEN_WIDTH // 2 - 205, objective_y, 410, 42)
+            draw_panel(self.screen, guide_rect, UI_PRIMARY, False)
+            pygame.draw.polygon(self.screen, UI_PRIMARY, [tip, left, right])
+            remaining = len(self.treasure_chests)
+            guide = FONT_XS.render(f"探索目标：能量宝箱  {distance} 格  ·  剩余 {remaining}", True, WHITE)
+            self.screen.blit(guide, (guide_rect.left + 50, guide_rect.top + 11))
+        elif self.wave_cooldown > 0:
+            guide_rect = pygame.Rect(SCREEN_WIDTH // 2 - 180, objective_y, 360, 42)
+            draw_panel(self.screen, guide_rect, UI_PRIMARY, False)
+            guide = FONT_XS.render("探索完成，准备迎接下一波", True, WHITE)
+            self.screen.blit(guide, guide.get_rect(center=guide_rect.center))
+
+    def draw_feedback_messages(self):
+        y = 190
+        for message in self.feedback_messages[-3:]:
+            alpha = min(255, message['timer'] * 4)
+            text = FONT_XS.render(message['text'], True, message['color'])
+            text.set_alpha(alpha)
+            rect = pygame.Rect(14, y, min(420, text.get_width() + 28), 34)
+            draw_panel(self.screen, rect, message['color'], False)
+            self.screen.blit(text, (rect.left + 14, rect.top + 8))
+            y += 40
 
     def draw_menu(self):
         time = pygame.time.get_ticks() * 0.001
@@ -2535,7 +2689,7 @@ class Game:
 
         back = FONT_XS.render("ESC  返回主菜单", True, UI_MUTED)
         self.screen.blit(back, (72, 828))
-        hint = FONT_XS.render("点击卡片或按数字键确认角色", True, UI_MUTED)
+        hint = FONT_XS.render("← / → 或 A / D 选择    SPACE / ENTER 确认    1-5 快速定位", True, UI_MUTED)
         self.screen.blit(hint, hint.get_rect(center=(SCREEN_WIDTH // 2, 828)))
 
     def draw_talent_selection(self):

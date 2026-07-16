@@ -86,6 +86,126 @@ class VisualUtils:
         return surf
 
     @staticmethod
+    def create_skill_icon(skill_id, color, size=48):
+        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        c = size // 2
+        line = max(2, size // 18)
+        skill_id = str(skill_id or '').lower()
+        pygame.draw.circle(surf, (*color[:3], 30), (c, c), c - 3)
+
+        if any(key in skill_id for key in ('shield', 'guard', 'armor', 'defense')):
+            points = [(c, 6), (size - 8, 13), (size - 12, size - 14), (c, size - 5), (12, size - 14), (8, 13)]
+            pygame.draw.polygon(surf, color, points, line)
+        elif any(key in skill_id for key in ('lightning', 'thunder', 'emp')):
+            points = [(c + 3, 4), (11, c + 2), (c - 2, c + 2), (c - 6, size - 4), (size - 10, c - 5), (c + 3, c - 5)]
+            pygame.draw.polygon(surf, color, points)
+        elif any(key in skill_id for key in ('fire', 'pyro', 'meteor', 'explosion')):
+            points = [(c, 5), (size - 10, c + 7), (c, size - 5), (10, c + 7)]
+            pygame.draw.polygon(surf, color, points)
+            pygame.draw.circle(surf, WHITE, (c, c + 7), max(3, size // 10))
+        elif any(key in skill_id for key in ('ice', 'frost', 'freeze')):
+            for angle in range(0, 180, 45):
+                rad = math.radians(angle)
+                dx, dy = math.cos(rad) * (c - 7), math.sin(rad) * (c - 7)
+                pygame.draw.line(surf, color, (c - dx, c - dy), (c + dx, c + dy), line)
+            pygame.draw.circle(surf, WHITE, (c, c), max(2, size // 12))
+        elif any(key in skill_id for key in ('gravity', 'orb')):
+            pygame.draw.circle(surf, color, (c, c), c - 7, line)
+            pygame.draw.circle(surf, color, (c, c), c // 2, line)
+            pygame.draw.circle(surf, WHITE, (c, c), max(2, size // 12))
+        elif any(key in skill_id for key in ('auto', 'rapid', 'sniper', 'arrow', 'missile')):
+            pygame.draw.circle(surf, color, (c, c), c - 9, line)
+            pygame.draw.line(surf, color, (c, 3), (c, size - 3), line)
+            pygame.draw.line(surf, color, (3, c), (size - 3, c), line)
+            pygame.draw.circle(surf, WHITE, (c, c), max(2, size // 12))
+        elif any(key in skill_id for key in ('heal', 'holy', 'immortal')):
+            pygame.draw.line(surf, color, (c, 8), (c, size - 8), line + 1)
+            pygame.draw.line(surf, color, (8, c), (size - 8, c), line + 1)
+        elif any(key in skill_id for key in ('decoy', 'shadow', 'clone')):
+            pygame.draw.polygon(surf, color, [(c, 5), (size - 7, c), (c, size - 5), (7, c)], line)
+            pygame.draw.polygon(surf, WHITE, [(c, 13), (size - 15, c), (c, size - 13), (15, c)], line)
+        elif 'boomerang' in skill_id:
+            pygame.draw.arc(surf, color, (7, 7, size - 14, size - 14), math.radians(20), math.radians(300), line + 1)
+            pygame.draw.polygon(surf, color, [(size - 13, 8), (size - 5, 16), (size - 18, 18)])
+        else:
+            points = [(c, 5), (size - 7, c // 2), (size - 7, size - c // 2), (c, size - 5), (7, size - c // 2), (7, c // 2)]
+            pygame.draw.polygon(surf, color, points, line)
+            pygame.draw.circle(surf, WHITE, (c, c), max(2, size // 12))
+        return surf
+
+    @staticmethod
+    def create_enemy_icon(kind, color, size=40, elite=False):
+        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        c = size // 2
+        line = max(2, size // 18)
+        kind = str(kind)
+
+        if kind == 'dragon':
+            wing = [(c, c), (3, 9), (8, c + 9), (c - 6, c + 4)]
+            pygame.draw.polygon(surf, (*color[:3], 150), wing)
+            pygame.draw.polygon(surf, (*color[:3], 150), [(size - x, y) for x, y in wing])
+            head = [(c, 5), (size - 12, c - 2), (c + 10, size - 8), (c, size - 3), (c - 10, size - 8), (12, c - 2)]
+            pygame.draw.polygon(surf, color, head)
+            pygame.draw.polygon(surf, WHITE, head, line)
+            pygame.draw.polygon(surf, color, [(c - 9, 9), (c - 18, 1), (c - 14, 16)])
+            pygame.draw.polygon(surf, color, [(c + 9, 9), (c + 18, 1), (c + 14, 16)])
+            pygame.draw.circle(surf, UI_ACCENT if 'UI_ACCENT' in globals() else YELLOW, (c - 6, c - 3), max(2, size // 20))
+            pygame.draw.circle(surf, UI_ACCENT if 'UI_ACCENT' in globals() else YELLOW, (c + 6, c - 3), max(2, size // 20))
+        elif kind == 'slime':
+            pygame.draw.ellipse(surf, color, (5, c - 3, size - 10, c + 1))
+            pygame.draw.circle(surf, WHITE, (c - 6, c + 2), max(2, size // 14))
+            pygame.draw.circle(surf, WHITE, (c + 6, c + 2), max(2, size // 14))
+        elif kind == 'bat':
+            pygame.draw.polygon(surf, color, [(c, 8), (4, c - 5), (10, size - 7), (c, c + 5), (size - 10, size - 7), (size - 4, c - 5)])
+            pygame.draw.circle(surf, WHITE, (c, c), max(2, size // 12))
+        elif kind == 'spider':
+            pygame.draw.circle(surf, color, (c, c), c // 3)
+            for offset in (-9, -3, 3, 9):
+                pygame.draw.line(surf, color, (c + offset // 2, c), (4 if offset < 0 else size - 4, c + offset), line)
+        elif kind == 'skeleton':
+            pygame.draw.circle(surf, color, (c, c - 4), c - 8, line)
+            pygame.draw.circle(surf, WHITE, (c - 6, c - 5), 3)
+            pygame.draw.circle(surf, WHITE, (c + 6, c - 5), 3)
+            pygame.draw.line(surf, color, (c - 8, c + 8), (c + 8, c + 8), line)
+        elif kind == 'ghost':
+            points = [(c, 5), (size - 7, c), (size - 9, size - 7), (c + 5, size - 13), (c, size - 7), (c - 5, size - 13), (9, size - 7), (7, c)]
+            pygame.draw.polygon(surf, color, points, line)
+            pygame.draw.circle(surf, WHITE, (c - 6, c - 4), 3)
+            pygame.draw.circle(surf, WHITE, (c + 6, c - 4), 3)
+        else:
+            pygame.draw.polygon(surf, color, [(c, 4), (size - 5, c), (c, size - 4), (5, c)])
+            pygame.draw.circle(surf, WHITE, (c - 6, c), 3)
+            pygame.draw.circle(surf, WHITE, (c + 6, c), 3)
+
+        if elite:
+            pygame.draw.circle(surf, YELLOW, (c, c), c - 2, line)
+        return surf
+
+    @staticmethod
+    def create_item_icon(item_type, color, size=40):
+        return VisualUtils.create_skill_icon(item_type, color, size)
+
+    @staticmethod
+    def create_weapon_icon(char_type, color, size=32):
+        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        c = size // 2
+        pygame.draw.line(surf, color, (c, 3), (c, size - 6), max(3, size // 8))
+        pygame.draw.polygon(surf, WHITE, [(c, 1), (c - 6, 9), (c + 6, 9)])
+        pygame.draw.line(surf, color, (c - 8, size - 8), (c + 8, size - 8), 3)
+        return surf
+
+    @staticmethod
+    def create_chest_icon(color, size=50):
+        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        body = pygame.Rect(5, size // 3, size - 10, size // 2)
+        pygame.draw.rect(surf, (70, 45, 24), body, border_radius=4)
+        pygame.draw.rect(surf, color, body, 3, border_radius=4)
+        pygame.draw.arc(surf, color, (8, 5, size - 16, size // 2), math.pi, math.pi * 2, 4)
+        lock = pygame.Rect(size // 2 - 4, size // 2, 8, 12)
+        pygame.draw.rect(surf, WHITE, lock, border_radius=2)
+        return surf
+
+    @staticmethod
     def draw_magic_circle(surface, x, y, color, radius, angle):
         """绘制旋转的魔法阵 - 增强版"""
         cx, cy = int(x), int(y)
