@@ -1,0 +1,46 @@
+====================================
+游戏打包成 EXE 文件 - 使用说明
+====================================
+
+【方法一】最简单（推荐）
+-------------------
+1. 双击运行 build.bat
+2. 等待打包完成（1-3分钟）
+3. 在 dist 文件夹中找到 CyberDungeon.exe
+
+【方法二】手动打包
+-------------------
+1. 安装 PyInstaller：
+   pip install pyinstaller
+
+2. 运行打包命令：
+   pyinstaller CyberDungeon.spec
+
+   或者使用：
+   pyinstaller --name=CyberDungeon --onefile --noconsole --clean --noconfirm --add-data="*.py;." --hidden-import=pygame --hidden-import=pygame.font --collect-all=pygame main.py
+
+【打包后的文件】
+-------------------
+位置：dist\CyberDungeon.exe
+大小：约 20-50MB（包含所有依赖）
+
+【注意事项】
+-------------------
+1. 首次运行可能需要几秒钟加载
+2. 某些杀毒软件可能会误报，这是正常现象
+3. 如果 Windows Defender 报警，选择"允许在设备上"
+4. 确保目标电脑有中文字体支持
+
+【遇到问题？】
+-------------------
+1. 确保已安装 pygame：
+   pip install pygame
+
+2. 确保已安装 pyinstaller：
+   pip install pyinstaller
+
+3. 如果打包失败，检查错误信息并参考 README_BUILD.md
+
+
+
+
