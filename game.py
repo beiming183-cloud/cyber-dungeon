@@ -2235,7 +2235,7 @@ class Game:
         for skill in self.player.skills:
             skill_y = y_offset
             # 技能图标
-            icon_surf = VisualUtils.create_skill_icon(skill.get('type', skill.get('name')), skill.get('color', WHITE), 30)
+            icon_surf = VisualUtils.create_skill_icon(skill.get('visual_id', skill.get('type', skill.get('name'))), skill.get('color', WHITE), 30)
             self.screen.blit(icon_surf, (60, skill_y))
             
             # 技能名称和按键
@@ -2416,7 +2416,7 @@ class Game:
                 key_surf = FONT_XS.render(str(skill_key), True, WHITE)
                 
                 # 技能图标
-                icon_surf = VisualUtils.create_skill_icon(skill.get('type', skill_name), color_tuple, 40)
+                icon_surf = VisualUtils.create_skill_icon(skill.get('visual_id', skill.get('type', skill_name)), color_tuple, 40)
                 self.screen.blit(icon_surf, (bx + 5, by + 5))
 
                 # 文字信息 - 调整位置确保在屏幕内
@@ -2664,7 +2664,7 @@ class Game:
                 status = FONT_XS.render("READY", True, char['color'])
                 self.screen.blit(status, (box_rect.right - status.get_width() - 16, box_rect.top + 18))
 
-            icon = VisualUtils.create_character_icon(char['type'], char['color'], 92)
+            icon = VisualUtils.create_character_icon(char['type'], char['color'], 112)
             self.screen.blit(icon, icon.get_rect(center=(box_rect.centerx, box_rect.top + 112)))
 
             name = FONT_CARD.render(char['name'], True, char['color'])

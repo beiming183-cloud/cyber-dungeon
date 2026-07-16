@@ -149,7 +149,7 @@ class Player(Entity):
                 {"key": "2", "name": "极寒冰矛", "cd": 55, "cur": 0, "color": NEON_BLUE, "icon": "❄️", "type": "frost_spear",
                  "behavior": "projectile", "damage": 45, "speed": 16, "life": 90,
                  "effects": {"freeze": {"duration": 90}}},
-                {"key": "3", "name": "雷霆万钧", "cd": 85, "cur": 0, "color": PURPLE, "icon": "⚡", "type": "chain_lightning",
+                {"key": "3", "name": "雷霆万钧", "cd": 85, "cur": 0, "color": PURPLE, "icon": "⚡", "type": "chain_lightning", "visual_id": "thunder_chain_storm",
                  "behavior": "projectile", "damage": 50, "speed": 20, "life": 100},
                 {"key": "4", "name": "暗影新星", "cd": 110, "cur": 0, "color": (100, 50, 150), "icon": "💀",
                  "type": "shadow_nova", "behavior": "area", "radius": 180, "damage": 55, "center": "player",
@@ -487,13 +487,10 @@ class Player(Entity):
     def draw(self, surface, camera):
         cx, cy = camera.apply_rect(self.rect).center
 
-        # 1. 绘制能量波动
-        pulse_radius = 5 + math.sin(math.radians(self.aura_pulse)) * 3
-        VisualUtils.draw_aura(surface, cx, cy, self.color, 35, pulse_radius)
-
-        # 2. 绘制脚底旋转魔法阵 - 增强版
-        VisualUtils.draw_magic_circle(surface, cx, cy, self.color, 25, self.magic_angle)
-        VisualUtils.draw_magic_circle(surface, cx, cy, NEON_BLUE, 20, -self.magic_angle * 1.5)
+        # 1. 每个职业使用独立的动态场域，不再共用同一套魔法阵。
+        VisualUtils.draw_character_fx(
+            surface, cx, cy, self.char_type, self.color, self.magic_angle, self.aura_pulse
+        )
 
         # 绘制能量波动圈
         for r, life in self.energy_waves:
@@ -1201,7 +1198,7 @@ class Projectile:
         self.pulse = 0  # 脉冲
 
         # 子弹图像
-        self.image = VisualUtils.create_skill_icon(self.skill_type, self.color, 24)
+        self.image = VisualUtils.create_skill_icon(skill_data.get('visual_id', self.skill_type), self.color, 24)
 
     def update(self):
         # 记录轨迹
