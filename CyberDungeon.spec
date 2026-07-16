@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('config.py', '.'), ('entities.py', '.'), ('game.py', '.'), ('skill_entities.py', '.'), ('systems.py', '.'), ('visual_effects.py', '.')]
+datas = [('config.py', '.'), ('entities.py', '.'), ('game.py', '.'), ('skill_entities.py', '.'), ('systems.py', '.'), ('visual_effects.py', '.'), ('ui_components.py', '.')]
 binaries = []
 hiddenimports = ['pygame', 'pygame.font', 'pygame.mixer']
 tmp_ret = collect_all('pygame')

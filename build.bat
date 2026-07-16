@@ -39,6 +39,7 @@ pyinstaller --name=CyberDungeon ^
     --add-data="skill_entities.py;." ^
     --add-data="systems.py;." ^
     --add-data="visual_effects.py;." ^
+    --add-data="ui_components.py;." ^
     --hidden-import=pygame ^
     --hidden-import=pygame.font ^
     --hidden-import=pygame.mixer ^
@@ -71,4 +72,3 @@ echo - 文件大小约 20-50MB（包含Python解释器）
 echo.
 echo 按任意键退出...
 pause >nul
-

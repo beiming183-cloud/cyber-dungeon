@@ -22,6 +22,70 @@ class VisualUtils:
         return surf
 
     @staticmethod
+    def create_character_icon(character_type, color, size=88):
+        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        center = size // 2
+        line = max(2, size // 28)
+        pygame.draw.circle(surf, (*color[:3], 24), (center, center), size // 2 - 5)
+        pygame.draw.circle(surf, color, (center, center), size // 2 - 8, line)
+
+        if character_type == 'cyber_mage':
+            pygame.draw.circle(surf, color, (center, center), size // 5, line)
+            for angle in range(0, 360, 60):
+                rad = math.radians(angle)
+                inner = (center + math.cos(rad) * size * 0.18, center + math.sin(rad) * size * 0.18)
+                outer = (center + math.cos(rad) * size * 0.34, center + math.sin(rad) * size * 0.34)
+                pygame.draw.line(surf, color, inner, outer, line)
+        elif character_type == 'mech_ranger':
+            pygame.draw.circle(surf, color, (center, center), size // 4, line)
+            pygame.draw.circle(surf, WHITE, (center, center), size // 12, line)
+            pygame.draw.line(surf, color, (center, 12), (center, center - size // 4), line)
+            pygame.draw.line(surf, color, (center, center + size // 4), (center, size - 12), line)
+            pygame.draw.line(surf, color, (12, center), (center - size // 4, center), line)
+            pygame.draw.line(surf, color, (center + size // 4, center), (size - 12, center), line)
+        elif character_type == 'bio_berserker':
+            pygame.draw.line(surf, color, (24, size - 20), (size - 24, 20), line + 2)
+            pygame.draw.line(surf, color, (20, 24), (size - 20, size - 24), line + 2)
+            pygame.draw.circle(surf, WHITE, (center, center), size // 10, line)
+        elif character_type == 'shadow_assassin':
+            points = [(center, 14), (size - 18, center), (center, size - 14), (18, center)]
+            pygame.draw.polygon(surf, color, points, line)
+            pygame.draw.line(surf, color, (center, 22), (center, size - 22), line)
+            pygame.draw.circle(surf, WHITE, (center, center), size // 13)
+        else:
+            shield = [
+                (center, 14),
+                (size - 18, 26),
+                (size - 24, size - 30),
+                (center, size - 12),
+                (24, size - 30),
+                (18, 26),
+            ]
+            pygame.draw.polygon(surf, color, shield, line)
+            pygame.draw.line(surf, WHITE, (center, 26), (center, size - 30), line)
+            pygame.draw.line(surf, WHITE, (center - 14, center), (center + 14, center), line)
+        return surf
+
+    @staticmethod
+    def create_talent_icon(talent_type, color, size=76):
+        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        center = size // 2
+        line = max(2, size // 25)
+        pygame.draw.circle(surf, (*color[:3], 28), (center, center), center - 4)
+        if talent_type == 'combat':
+            pygame.draw.line(surf, color, (20, size - 18), (size - 18, 18), line + 2)
+            pygame.draw.line(surf, color, (18, 18), (size - 20, size - 18), line + 2)
+            pygame.draw.circle(surf, WHITE, (center, center), 5)
+        elif talent_type == 'survival':
+            shield = [(center, 10), (size - 16, 22), (size - 22, size - 24), (center, size - 10), (22, size - 24), (16, 22)]
+            pygame.draw.polygon(surf, color, shield, line)
+            pygame.draw.line(surf, WHITE, (center, 22), (center, size - 24), line)
+        else:
+            pygame.draw.circle(surf, color, (center, center), center - 12, line)
+            pygame.draw.polygon(surf, WHITE, [(center, 16), (center + 7, center), (center, size - 16), (center - 7, center)])
+        return surf
+
+    @staticmethod
     def draw_magic_circle(surface, x, y, color, radius, angle):
         """绘制旋转的魔法阵 - 增强版"""
         cx, cy = int(x), int(y)

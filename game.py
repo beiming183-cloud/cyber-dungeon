@@ -8,6 +8,14 @@ from entities import Player, Enemy, Item, Projectile, TreasureChest
 from systems import Camera, DungeonGenerator
 from visual_effects import VisualUtils, Particle
 from skill_entities import Mine, Decoy, GravityField, PoisonField
+from ui_components import (
+    draw_button,
+    draw_corner_brackets,
+    draw_grid_background,
+    draw_keycap,
+    draw_panel,
+    draw_wrapped_text,
+)
 
 
 # ==================== 游戏主控 ====================
@@ -496,31 +504,18 @@ class Game:
                 if self.state == "CHAR_SELECT":
                     mx, my = event.pos
                     for i, char in enumerate(self.char_options):
-                        if i < 3:
-                            # 上排3个角色
-                            x = SCREEN_WIDTH // 2 + (i - 1) * 280
-                            y = SCREEN_HEIGHT // 2 - 80
-                        else:
-                            # 下排2个角色
-                            x = SCREEN_WIDTH // 2 + (i - 3.5) * 280
-                            y = SCREEN_HEIGHT // 2 + 150
-                        box_width, box_height = 250, 280
-                        box_rect = pygame.Rect(x - box_width // 2, y - box_height // 2, box_width, box_height)
+                        box_rect = self.get_character_card_rect(i)
                         if box_rect.collidepoint(mx, my):
                             self.selected_char = char['type']
                             self.state = "TALENT_SELECT"
                             break  # 找到匹配的角色后退出循环 event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:  # 左键点击
                 if self.state == "TALENT_SELECT":
-                    mx, my = pygame.mouse.get_pos()
-                    # 检查是否点击了天赋选项
-                    option_height = 80
-                    option_y = SCREEN_HEIGHT // 2 - option_height
-                    for i, talent in enumerate(['combat', 'survival', 'exploration']):
-                        option_rect = pygame.Rect(SCREEN_WIDTH // 2 - 300, option_y + i * 100, 600, option_height)
+                    mx, my = event.pos
+                    for i, talent in enumerate(self.talent_options):
+                        option_rect = self.get_talent_card_rect(i)
                         if option_rect.collidepoint(mx, my):
-                            self.selected_talent = talent
-                    # 检查是否点击了开始游戏按钮区域
-                    start_rect = pygame.Rect(SCREEN_WIDTH // 2 - 150, SCREEN_HEIGHT - 150, 300, 60)
+                            self.selected_talent = talent['type']
+                    start_rect = pygame.Rect(SCREEN_WIDTH // 2 - 180, 735, 360, 60)
                     if start_rect.collidepoint(mx, my) and self.selected_talent:
                         self.init_game_world()
                         self.state = "GAME"
@@ -2242,65 +2237,52 @@ class Game:
             
         # 波次信息显示（如果启用了波次模式）
         if self.wave_mode:
-            panel_w, panel_h = 350, 100
-            x = SCREEN_WIDTH - panel_w - 20
-            y = 20
+            panel_w, panel_h = 320, 78
+            x = (SCREEN_WIDTH - panel_w) // 2
+            y = 16
+            draw_panel(self.screen, (x, y, panel_w, panel_h), UI_PRIMARY, False)
 
-            # 背景板
-            s = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
-            pygame.draw.rect(s, UI_BG, s.get_rect(), border_radius=15)
-            pygame.draw.rect(s, WHITE, s.get_rect(), 2, border_radius=15)
-            self.screen.blit(s, (x, y))
+            wave_text = FONT_CARD.render(f"波次 {self.current_wave}", True, UI_ACCENT)
+            self.screen.blit(wave_text, (x + 18, y + 11))
+            kill_text = FONT_XS.render(f"{self.wave_enemies_killed} / {self.wave_enemies_count}", True, WHITE)
+            self.screen.blit(kill_text, (x + panel_w - kill_text.get_width() - 18, y + 17))
 
-            # 波次标题
-            wave_text = FONT_M.render(f"波次 {self.current_wave}", True, YELLOW)
-            self.screen.blit(wave_text, (x + 20, y + 15))
-
-            # 进度条背景
-            bar_bg = pygame.Rect(x + 20, y + 50, panel_w - 40, 20)
-            pygame.draw.rect(self.screen, DARK_GRAY, bar_bg, border_radius=10)
+            bar_bg = pygame.Rect(x + 18, y + 50, panel_w - 36, 10)
+            pygame.draw.rect(self.screen, (35, 43, 58), bar_bg, border_radius=5)
 
             # 进度条填充
             if self.wave_enemies_count > 0:
                 progress = min(1.0, self.wave_enemies_killed / self.wave_enemies_count)
-                bar_width = int((panel_w - 40) * progress)
-                bar_fill = pygame.Rect(x + 20, y + 50, bar_width, 20)
-                pygame.draw.rect(self.screen, GREEN, bar_fill, border_radius=10)
-
-            # 击杀统计
-            kill_text = FONT_S.render(f"{self.wave_enemies_killed}/{self.wave_enemies_count}", True, WHITE)
-            text_x = x + (panel_w - kill_text.get_width()) // 2
-            self.screen.blit(kill_text, (text_x, y + 45))
+                bar_width = int((panel_w - 36) * progress)
+                bar_fill = pygame.Rect(x + 18, y + 50, bar_width, 10)
+                pygame.draw.rect(self.screen, GREEN, bar_fill, border_radius=5)
 
             # 倒计时
             if self.wave_cooldown > 0:
-                countdown_text = FONT_S.render(f"下一波: {int(self.wave_cooldown / 60)}s", True, ORANGE)
-                self.screen.blit(countdown_text, (x + 20, y + 75))
+                countdown_text = FONT_XS.render(f"下一波 {int(self.wave_cooldown / 60)}s", True, ORANGE)
+                self.screen.blit(countdown_text, countdown_text.get_rect(center=(x + panel_w // 2, y + 68)))
 
         # 1. 技能栏 - 调整为10个技能（分两行显示）
         if not hasattr(self, 'player') or not self.player or not hasattr(self.player, 'skills'):
             return
         
-        skills_per_row = 5
         num_skills = min(len(self.player.skills), 10)  # 最多显示10个
-        num_rows = (num_skills + skills_per_row - 1) // skills_per_row
+        skills_per_row = max(1, num_skills)
+        num_rows = 1
         
         # 计算面板尺寸 - 确保适配屏幕
-        max_panel_w = min(1080, SCREEN_WIDTH - 40)
-        panel_w = max_panel_w
-        skill_item_w = (panel_w - 40) // skills_per_row  # 每个技能的宽度
-        item_height = 85  # 每个技能的高度（包括间距）
-        panel_h = item_height * num_rows + 20  # 总高度
+        panel_w = min(940, max(420, num_skills * 86 + 36))
+        skill_item_w = (panel_w - 36) // skills_per_row
+        item_height = 72
+        panel_h = 106
         
         # 计算位置 - 确保在屏幕底部可见区域
-        x = max(10, (SCREEN_WIDTH - panel_w) // 2)
-        y = SCREEN_HEIGHT - panel_h - 20  # 从底部向上计算，留出20像素边距
+        x = (SCREEN_WIDTH - panel_w) // 2
+        y = SCREEN_HEIGHT - panel_h - 14
 
         # 背景板
-        s = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
-        pygame.draw.rect(s, UI_BG, s.get_rect(), border_radius=15)
-        pygame.draw.rect(s, WHITE, s.get_rect(), 2, border_radius=15)
-        self.screen.blit(s, (x, y))
+        if num_skills:
+            draw_panel(self.screen, (x, y, panel_w, panel_h), UI_PRIMARY, False)
 
         # 绘制每个技能 - 增强版UI（支持10个技能，分两行）
         for i, skill in enumerate(self.player.skills):
@@ -2309,11 +2291,11 @@ class Game:
                 
             row = i // skills_per_row
             col = i % skills_per_row
-            bx = x + 20 + col * skill_item_w
-            by = y + 15 + row * item_height
+            bx = x + 18 + col * skill_item_w + (skill_item_w - 50) // 2
+            by = y + 24 + row * item_height
             
             # 确保技能图标在屏幕内
-            if by < 0 or by > SCREEN_HEIGHT - 100:
+            if by < 0 or by > SCREEN_HEIGHT - 50:
                 continue  # 跳过超出屏幕的技能
 
             # 技能图标框 - 带发光效果
@@ -2345,8 +2327,8 @@ class Game:
             skill_icon = skill.get('icon', '•')
             
             try:
-                name_surf = FONT_S.render(skill_name, True, color_tuple)
-                key_surf = FONT_S.render(f"[{skill_key}]", True, WHITE)
+                name_surf = FONT_XS.render(skill_name, True, color_tuple)
+                key_surf = FONT_XS.render(str(skill_key), True, WHITE)
                 
                 # 技能图标
                 icon_surf = VisualUtils.create_emoji_surface(skill_icon, color_tuple, 40)
@@ -2364,8 +2346,8 @@ class Game:
                     max_name_width = skill_item_w - 10
                     if name_surf.get_width() > max_name_width:
                         # 如果名称太长，使用省略号
-                        name_surf = FONT_S.render(skill_name[:6] + '...', True, color_tuple)
-                    self.screen.blit(name_surf, (bx - 5, name_y))
+                        name_surf = FONT_XS.render(skill_name[:5] + '...', True, color_tuple)
+                    self.screen.blit(name_surf, name_surf.get_rect(center=(bx + 25, name_y + 8)))
 
                 # 冷却数字
                 if skill.get('cur', 0) > 0:
@@ -2378,139 +2360,113 @@ class Game:
                 continue
 
         # 2. 左上角状态
-        info_surf = pygame.Surface((200, 120), pygame.SRCALPHA)
-        pygame.draw.rect(info_surf, UI_BG, info_surf.get_rect(), border_radius=10)
-        self.screen.blit(info_surf, (10, 10))
+        info_rect = pygame.Rect(14, 14, 284, 112)
+        draw_panel(self.screen, info_rect, self.player.color, False)
+        hp_label = FONT_XS.render("生命值", True, UI_MUTED)
+        hp_value = FONT_XS.render(f"{max(0, int(self.player.hp))} / {int(self.player.max_hp)}", True, WHITE)
+        self.screen.blit(hp_label, (info_rect.left + 16, info_rect.top + 13))
+        self.screen.blit(hp_value, (info_rect.right - hp_value.get_width() - 16, info_rect.top + 13))
 
-        # 显示生命数（如果有无敌之心）
-        lives_text = ""
+        hp_bg = pygame.Rect(info_rect.left + 16, info_rect.top + 41, info_rect.width - 32, 12)
+        pygame.draw.rect(self.screen, (42, 47, 58), hp_bg, border_radius=6)
+        hp_ratio = max(0.0, min(1.0, self.player.hp / max(1, self.player.max_hp)))
+        hp_fill = pygame.Rect(hp_bg.x, hp_bg.y, int(hp_bg.width * hp_ratio), hp_bg.height)
+        if hp_fill.width:
+            pygame.draw.rect(self.screen, UI_DANGER, hp_fill, border_radius=6)
+
+        coin_text = FONT_XS.render(f"金币  {self.player.coins}", True, UI_ACCENT)
+        time_text = FONT_XS.render(f"时间  {int(self.game_time / 60)}s", True, WHITE)
+        self.screen.blit(coin_text, (info_rect.left + 16, info_rect.top + 72))
+        self.screen.blit(time_text, (info_rect.right - time_text.get_width() - 16, info_rect.top + 72))
+
+        status_parts = []
         if hasattr(self.player, 'lives') and self.player.lives > 1:
-            lives_text = FONT_S.render(f"生命: {self.player.lives}", True, (255, 100, 150))
-            self.screen.blit(lives_text, (25, 20))
-            y_offset = 50
-        else:
-            y_offset = 20
-        
-        hp_text = FONT_S.render(f"HP: {self.player.hp}/{self.player.max_hp}", True, RED)
-        coin_text = FONT_S.render(f"金币: {self.player.coins}", True, YELLOW)
-        time_text = FONT_S.render(f"时间: {int(self.game_time / 60)}s", True, WHITE)
-        
-        # 显示无敌状态
+            status_parts.append(f"生命 {self.player.lives}")
         if hasattr(self.player, 'is_invincible') and self.player.is_invincible:
-            inv_text = FONT_S.render(f"无敌: {int(self.player.invincible_timer / 60)}s", True, YELLOW)
-            self.screen.blit(inv_text, (25, y_offset))
-            y_offset += 30
-        
-        # 显示游戏速度
+            status_parts.append(f"无敌 {int(self.player.invincible_timer / 60)}s")
         if hasattr(self, 'game_speed') and self.game_speed > 1.0:
-            speed_text = FONT_S.render(f"速度: {self.game_speed}x", True, ORANGE)
-            self.screen.blit(speed_text, (25, y_offset))
-            y_offset += 30
+            status_parts.append(f"{self.game_speed}x")
+        if status_parts:
+            status_text = FONT_XS.render("  |  ".join(status_parts), True, UI_PRIMARY)
+            self.screen.blit(status_text, (info_rect.left + 16, info_rect.bottom + 8))
 
-        self.screen.blit(hp_text, (25, y_offset))
-        self.screen.blit(coin_text, (25, y_offset + 30))
-        self.screen.blit(time_text, (25, y_offset + 60))
-        
-        # 显示商店可用提示（如果商店可用但未激活）
         if hasattr(self, 'shop_available') and self.shop_available and not self.shop_active:
-            shop_hint_y = y_offset + 90
-            shop_hint = FONT_S.render("按 [B] 打开商店", True, YELLOW)
-            # 闪烁效果
-            shop_hint.set_alpha(int(150 + 105 * abs(math.sin(pygame.time.get_ticks() * 0.005))))
-            self.screen.blit(shop_hint, (25, shop_hint_y))
+            shop_hint = FONT_XS.render("B  打开商店", True, UI_ACCENT)
+            self.screen.blit(shop_hint, (info_rect.left + 16, info_rect.bottom + 34))
 
         # 3. 角色专属被动显示
         if self.player.character_passive:
-            passive_surf = pygame.Surface((200, 35), pygame.SRCALPHA)
-            passive_surf.fill(UI_BG)
-            pygame.draw.rect(passive_surf, self.player.color, passive_surf.get_rect(), 2)
-            self.screen.blit(passive_surf, (SCREEN_WIDTH - 210, 10))
-
-            name_text = FONT_S.render(self.player.character_passive['name'], True, self.player.color)
-            self.screen.blit(name_text, (SCREEN_WIDTH - 200, 15))
+            passive_rect = pygame.Rect(SCREEN_WIDTH - 258, 14, 244, 42)
+            draw_panel(self.screen, passive_rect, self.player.color, True)
+            name_text = FONT_XS.render(self.player.character_passive['name'], True, self.player.color)
+            self.screen.blit(name_text, name_text.get_rect(center=passive_rect.center))
 
         # 4. 其他被动技能显示（右上角）
         if self.player.passive_skills:
-            passive_y = 55
+            passive_y = 68
             for skill_id, skill_info in self.player.passive_skills.items():
                 # 只显示存在于available_passives中的技能，避免KeyError
                 if skill_id in self.player.available_passives:
                     skill_data = self.player.available_passives[skill_id]
                     level = skill_info['level']
-                    icon_surf = VisualUtils.create_emoji_surface(skill_data['icon'], skill_data['color'], 30)
-                    self.screen.blit(icon_surf, (SCREEN_WIDTH - 100, passive_y))
-                    level_text = FONT_S.render(f"Lv.{level}", True, skill_data['color'])
-                    self.screen.blit(level_text, (SCREEN_WIDTH - 70, passive_y + 5))
-                    passive_y += 35
+                    defensive = any(token in skill_id for token in ('shield', 'health', 'defense', 'armor'))
+                    icon_type = 'survival' if defensive else 'combat'
+                    icon_surf = VisualUtils.create_talent_icon(icon_type, skill_data['color'], 30)
+                    slot_rect = pygame.Rect(SCREEN_WIDTH - 112, passive_y, 98, 34)
+                    draw_panel(self.screen, slot_rect, skill_data['color'], False)
+                    self.screen.blit(icon_surf, (slot_rect.left + 6, slot_rect.top + 2))
+                    level_text = FONT_XS.render(f"Lv.{level}", True, skill_data['color'])
+                    self.screen.blit(level_text, (slot_rect.left + 42, slot_rect.top + 8))
+                    passive_y += 40
 
     def draw_menu(self):
-        # 美化的动态背景 - 渐变星空效果
-        self.screen.fill((5, 5, 15))  # 深蓝黑色背景
-        
-        # 星空粒子效果
         time = pygame.time.get_ticks() * 0.001
-        for i in range(100):
-            x = (time * 20 + i * 37.3) % SCREEN_WIDTH
-            y = (time * 15 + i * 23.7) % SCREEN_HEIGHT
-            brightness = int(100 + 155 * abs(math.sin(time * 2 + i * 0.1)))
-            size = 1 + int(2 * abs(math.sin(time + i * 0.05)))
-            pygame.draw.circle(self.screen, (brightness, brightness, brightness), (int(x), int(y)), size)
-        
-        # 彩色流星效果
+        draw_grid_background(self.screen, time)
+
+        # Keep the original starfield and meteors, but lower their contrast so UI stays legible.
+        for i in range(70):
+            x = (time * 12 + i * 53.7) % SCREEN_WIDTH
+            y = (time * 8 + i * 31.9) % SCREEN_HEIGHT
+            brightness = int(70 + 70 * abs(math.sin(time * 1.4 + i * 0.17)))
+            pygame.draw.circle(self.screen, (brightness, brightness, brightness + 18), (int(x), int(y)), 1)
+
         for i in range(3):
-            meteor_x = (time * 100 + i * SCREEN_WIDTH / 3) % (SCREEN_WIDTH + 100)
-            meteor_y = (time * 80 + i * 200) % SCREEN_HEIGHT
+            meteor_x = (time * 76 + i * SCREEN_WIDTH / 3) % (SCREEN_WIDTH + 120)
+            meteor_y = (time * 54 + i * 220) % SCREEN_HEIGHT
             meteor_color = [CYAN, PURPLE, NEON_BLUE][i]
-            for j in range(5):
-                trail_x = meteor_x - j * 20
-                trail_y = meteor_y - j * 15
-                alpha = 255 - j * 40
+            for j in range(4):
+                trail_x = meteor_x - j * 18
+                trail_y = meteor_y - j * 12
+                alpha = 130 - j * 28
                 if 0 <= trail_x <= SCREEN_WIDTH and 0 <= trail_y <= SCREEN_HEIGHT:
-                    s = pygame.Surface((10, 10), pygame.SRCALPHA)
-                    pygame.draw.circle(s, (*meteor_color[:3], alpha), (5, 5), 5 - j)
+                    s = pygame.Surface((8, 8), pygame.SRCALPHA)
+                    pygame.draw.circle(s, (*meteor_color[:3], alpha), (4, 4), max(1, 3 - j // 2))
                     self.screen.blit(s, (int(trail_x), int(trail_y)))
 
-        # 标题 - 更华丽的效果
-        title_text = "✨ 赛博地牢 ✨"
-        title = FONT_L.render(title_text, True, NEON_BLUE)
-        
-        # 标题发光效果
-        glow_radius = 3 + math.sin(time * 3) * 2
-        glow_surf = pygame.Surface((title.get_width() + 20, title.get_height() + 20), pygame.SRCALPHA)
-        for i in range(3):
-            r = glow_radius + i * 2
-            a = 50 - i * 15
-            glow_title = FONT_L.render(title_text, True, (*NEON_BLUE[:3], a))
-            glow_surf.blit(glow_title, (10 + i, 10 + i))
-        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 280))
-        self.screen.blit(glow_surf, (title_rect.x - 10, title_rect.y - 10))
-        self.screen.blit(title, title_rect)
-        
-        # 副标题
-        subtitle = FONT_M.render("Cyber Dungeon", True, CYAN)
-        subtitle.set_alpha(int(150 + 105 * abs(math.sin(time * 2))))
-        subtitle_rect = subtitle.get_rect(center=(SCREEN_WIDTH // 2, 340))
-        self.screen.blit(subtitle, subtitle_rect)
+        draw_corner_brackets(self.screen, (54, 50, SCREEN_WIDTH - 108, SCREEN_HEIGHT - 100), UI_PRIMARY, 34, 2)
 
-        # 提示文字 - 闪烁效果
-        tip = FONT_M.render("按 [空格] 开始游戏", True, YELLOW)
-        tip.set_alpha(int(150 + 105 * abs(math.sin(time * 3))))
-        tip_rect = tip.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 150))
-        
-        # 提示文字背景高亮
-        highlight = pygame.Surface((tip.get_width() + 40, tip.get_height() + 20), pygame.SRCALPHA)
-        highlight.fill((*YELLOW[:3], 30))
-        highlight_rect = highlight.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 150))
-        self.screen.blit(highlight, highlight_rect)
-        self.screen.blit(tip, tip_rect)
-        
-        manual_tip = FONT_S.render("按 [H] 查看游戏说明书", True, WHITE)
-        manual_tip_rect = manual_tip.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 110))
-        self.screen.blit(manual_tip, manual_tip_rect)
-        
-        # 装饰性边框
-        border_color = (NEON_BLUE[0], NEON_BLUE[1], NEON_BLUE[2], 100)
-        pygame.draw.rect(self.screen, border_color, (50, 50, SCREEN_WIDTH - 100, SCREEN_HEIGHT - 100), 3)
+        protocol = FONT_XS.render("ROGUELITE COMBAT PROTOCOL // ONLINE", True, UI_MUTED)
+        self.screen.blit(protocol, protocol.get_rect(center=(SCREEN_WIDTH // 2, 205)))
+
+        title = FONT_HERO.render("赛博地牢", True, WHITE)
+        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 300))
+        glow = pygame.Surface((title_rect.width + 80, title_rect.height + 36), pygame.SRCALPHA)
+        pygame.draw.rect(glow, (*UI_PRIMARY[:3], 24), glow.get_rect(), border_radius=8)
+        self.screen.blit(glow, glow.get_rect(center=title_rect.center))
+        self.screen.blit(title, title_rect)
+        pygame.draw.line(self.screen, UI_PRIMARY, (title_rect.left, title_rect.bottom + 12), (title_rect.right, title_rect.bottom + 12), 2)
+
+        subtitle = FONT_CARD.render("CYBER DUNGEON", True, UI_PRIMARY)
+        self.screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 385)))
+
+        pulse = (math.sin(time * 3) + 1) * 0.5
+        start_rect = pygame.Rect(0, 0, 360, 66)
+        start_rect.center = (SCREEN_WIDTH // 2, 650)
+        draw_button(self.screen, start_rect, "开始游戏", FONT_M, True, pulse)
+        draw_keycap(self.screen, "SPACE", (SCREEN_WIDTH // 2, 712), True)
+
+        manual = FONT_XS.render("H  游戏说明", True, UI_MUTED)
+        self.screen.blit(manual, manual.get_rect(center=(SCREEN_WIDTH // 2, 770)))
 
     def draw_gameover(self):
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
@@ -2527,134 +2483,104 @@ class Game:
         menu_text_rect = menu_text.get_rect(center=(SCREEN_WIDTH // 2, 450))
         self.screen.blit(menu_text, menu_text_rect)
 
+    def get_character_card_rect(self, index):
+        return pygame.Rect(100 + index * 284, 220, 264, 440)
+
+    def get_talent_card_rect(self, index):
+        return pygame.Rect(290 + index * 350, 250, 320, 400)
+
     def draw_char_selection(self):
-        # 绘制背景
-        self.screen.fill(BLACK)
-        for i in range(50):
-            rx = (pygame.time.get_ticks() * 0.1 + i * 100) % SCREEN_WIDTH
-            ry = (i * 50) % SCREEN_HEIGHT
-            pygame.draw.circle(self.screen, (20, 20, 40), (rx, ry), 2)
+        time = pygame.time.get_ticks() * 0.001
+        draw_grid_background(self.screen, time)
+        draw_corner_brackets(self.screen, (48, 44, SCREEN_WIDTH - 96, SCREEN_HEIGHT - 88), UI_PRIMARY, 28, 2)
 
-        # 绘制标题
-        title = FONT_L.render("选择角色", True, WHITE)
-        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 100))
-        self.screen.blit(title, title_rect)
+        title = FONT_TITLE.render("选择作战角色", True, WHITE)
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 90)))
+        subtitle = FONT_XS.render("SELECT COMBAT FRAME // 1-5 快速选择", True, UI_MUTED)
+        self.screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 142)))
 
-        # 绘制角色选项（5个角色，分两行显示：上排3个，下排2个）
         for i, char in enumerate(self.char_options):
-            if i < 3:
-                # 上排3个角色
-                x = SCREEN_WIDTH // 2 + (i - 1) * 280
-                y = SCREEN_HEIGHT // 2 - 80
+            box_rect = self.get_character_card_rect(i)
+            selected = char['type'] == self.selected_char
+            draw_panel(self.screen, box_rect, char['color'], selected)
+
+            index_text = FONT_XS.render(f"0{i + 1}", True, char['color'] if selected else UI_MUTED)
+            self.screen.blit(index_text, (box_rect.left + 16, box_rect.top + 18))
+            if selected:
+                status = FONT_XS.render("READY", True, char['color'])
+                self.screen.blit(status, (box_rect.right - status.get_width() - 16, box_rect.top + 18))
+
+            icon = VisualUtils.create_character_icon(char['type'], char['color'], 92)
+            self.screen.blit(icon, icon.get_rect(center=(box_rect.centerx, box_rect.top + 112)))
+
+            name = FONT_CARD.render(char['name'], True, char['color'])
+            self.screen.blit(name, name.get_rect(center=(box_rect.centerx, box_rect.top + 190)))
+
+            if ':' in char['desc']:
+                trait, detail = char['desc'].split(':', 1)
             else:
-                # 下排2个角色
-                x = SCREEN_WIDTH // 2 + (i - 3.5) * 280
-                y = SCREEN_HEIGHT // 2 + 150
+                trait, detail = "核心特性", char['desc']
+            trait_text = FONT_XS.render(trait.strip().upper(), True, UI_MUTED)
+            self.screen.blit(trait_text, trait_text.get_rect(center=(box_rect.centerx, box_rect.top + 232)))
+            draw_wrapped_text(
+                self.screen,
+                detail.strip(),
+                FONT_XS,
+                WHITE,
+                (box_rect.left + 20, box_rect.top + 266, box_rect.width - 40, 82),
+                line_gap=7,
+                max_lines=3,
+            )
+            draw_keycap(self.screen, str(i + 1), (box_rect.centerx, box_rect.bottom - 38), selected)
 
-            # 绘制角色框
-            box_width, box_height = 250, 280
-            box_rect = pygame.Rect(x - box_width // 2, y - box_height // 2, box_width, box_height)
-
-            # 高亮选中的角色
-            if char['type'] == self.selected_char:
-                pygame.draw.rect(self.screen, char['color'], box_rect, 3)
-                # 绘制选中指示
-                select_text = FONT_M.render("选中", True, char['color'])
-                select_rect = select_text.get_rect(topleft=(x - box_width // 2 + 10, y - box_height // 2 + 10))
-                self.screen.blit(select_text, select_rect)
-            else:
-                pygame.draw.rect(self.screen, DARK_GRAY, box_rect, 2)
-
-            # 绘制角色图标
-            icon_surf = VisualUtils.create_emoji_surface(char['emoji'], char['color'], 100)
-            icon_rect = icon_surf.get_rect(center=(x, y - 60))
-            self.screen.blit(icon_surf, icon_rect)
-
-            # 绘制角色名称
-            name_text = FONT_M.render(char['name'], True, char['color'])
-            name_rect = name_text.get_rect(center=(x, y + 20))
-            self.screen.blit(name_text, name_rect)
-
-            # 绘制角色描述
-            desc_text = FONT_S.render(char['desc'], True, WHITE)
-            desc_rect = desc_text.get_rect(center=(x, y + 60))
-            self.screen.blit(desc_text, desc_rect)
-
-            # 绘制按键提示
-            key_text = FONT_S.render(f"按 {i + 1} 选择", True, WHITE)
-            key_rect = key_text.get_rect(center=(x, y + 110))
-            self.screen.blit(key_text, key_rect)
-
-        # 绘制返回菜单提示
-        back_text = FONT_M.render("按 [ESC] 返回主菜单", True, WHITE)
-        back_rect = back_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 100))
-        self.screen.blit(back_text, back_rect)
+        back = FONT_XS.render("ESC  返回主菜单", True, UI_MUTED)
+        self.screen.blit(back, (72, 828))
+        hint = FONT_XS.render("点击卡片或按数字键确认角色", True, UI_MUTED)
+        self.screen.blit(hint, hint.get_rect(center=(SCREEN_WIDTH // 2, 828)))
 
     def draw_talent_selection(self):
-        # 绘制背景
-        self.screen.fill(BLACK)
-        for i in range(50):
-            rx = (pygame.time.get_ticks() * 0.1 + i * 100) % SCREEN_WIDTH
-            ry = (i * 50) % SCREEN_HEIGHT
-            pygame.draw.circle(self.screen, (20, 20, 40), (rx, ry), 2)
+        time = pygame.time.get_ticks() * 0.001
+        draw_grid_background(self.screen, time)
+        draw_corner_brackets(self.screen, (48, 44, SCREEN_WIDTH - 96, SCREEN_HEIGHT - 88), UI_PRIMARY, 28, 2)
 
-        # 绘制标题
-        title = FONT_L.render("选择初始天赋", True, WHITE)
-        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 100))
-        self.screen.blit(title, title_rect)
+        title = FONT_TITLE.render("选择初始天赋", True, WHITE)
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 90)))
+        subtitle = FONT_XS.render("INITIAL AUGMENT // 为本局确定成长方向", True, UI_MUTED)
+        self.screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 142)))
 
-        # 绘制天赋选项
         for i, talent in enumerate(self.talent_options):
-            x = SCREEN_WIDTH // 2 + (i - 1) * 300
-            y = SCREEN_HEIGHT // 2
+            box_rect = self.get_talent_card_rect(i)
+            selected = talent['type'] == self.selected_talent
+            draw_panel(self.screen, box_rect, talent['color'], selected)
 
-            # 绘制天赋框
-            box_width, box_height = 250, 220
-            box_rect = pygame.Rect(x - box_width // 2, y - box_height // 2, box_width, box_height)
+            icon = VisualUtils.create_talent_icon(talent['type'], talent['color'], 82)
+            self.screen.blit(icon, icon.get_rect(center=(box_rect.centerx, box_rect.top + 92)))
+            name = FONT_CARD.render(talent['name'], True, talent['color'])
+            self.screen.blit(name, name.get_rect(center=(box_rect.centerx, box_rect.top + 170)))
 
-            # 高亮选中的天赋
-            if talent['type'] == self.selected_talent:
-                pygame.draw.rect(self.screen, talent['color'], box_rect, 3)
-                # 绘制选中指示
-                select_text = FONT_M.render("选中", True, talent['color'])
-                select_rect = select_text.get_rect(topleft=(x - box_width // 2 + 10, y - box_height // 2 + 10))
-                self.screen.blit(select_text, select_rect)
-            else:
-                pygame.draw.rect(self.screen, DARK_GRAY, box_rect, 2)
+            pygame.draw.line(
+                self.screen,
+                UI_BORDER,
+                (box_rect.left + 34, box_rect.top + 208),
+                (box_rect.right - 34, box_rect.top + 208),
+                1,
+            )
+            draw_wrapped_text(
+                self.screen,
+                talent['desc'],
+                FONT_XS,
+                WHITE,
+                (box_rect.left + 30, box_rect.top + 238, box_rect.width - 60, 92),
+                line_gap=8,
+                max_lines=4,
+            )
+            draw_keycap(self.screen, str(i + 1), (box_rect.centerx, box_rect.bottom - 36), selected)
 
-            # 绘制天赋图标
-            icon_surf = VisualUtils.create_emoji_surface(talent['emoji'], talent['color'], 80)
-            icon_rect = icon_surf.get_rect(center=(x, y - 30))
-            self.screen.blit(icon_surf, icon_rect)
-
-            # 绘制天赋名称
-            name_text = FONT_M.render(talent['name'], True, talent['color'])
-            name_rect = name_text.get_rect(center=(x, y + 30))
-            self.screen.blit(name_text, name_rect)
-
-            # 绘制天赋描述（支持多行）
-            desc_lines = talent['desc'].split('\n')
-            desc_y = y + 55
-            for line in desc_lines:
-                desc_text = FONT_S.render(line, True, WHITE)
-                desc_rect = desc_text.get_rect(center=(x, desc_y))
-                self.screen.blit(desc_text, desc_rect)
-                desc_y += 20
-
-            # 绘制按键提示
-            key_text = FONT_S.render(f"按 {i + 1} 选择", True, WHITE)
-            key_rect = key_text.get_rect(center=(x, y + 100))
-            self.screen.blit(key_text, key_rect)
-
-        # 绘制开始游戏提示
-        start_text = FONT_M.render("按 [空格] 开始游戏", True, WHITE)
-        start_rect = start_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 100))
-        self.screen.blit(start_text, start_rect)
-
-        # 绘制返回提示
-        back_text = FONT_S.render("按 [ESC] 返回角色选择", True, WHITE)
-        back_rect = back_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 60))
-        self.screen.blit(back_text, back_rect)
+        start_rect = pygame.Rect(SCREEN_WIDTH // 2 - 180, 735, 360, 60)
+        draw_button(self.screen, start_rect, "进入地牢", FONT_M, bool(self.selected_talent), 0.35)
+        draw_keycap(self.screen, "SPACE", (SCREEN_WIDTH // 2, 814), bool(self.selected_talent))
+        back = FONT_XS.render("ESC  返回角色选择", True, UI_MUTED)
+        self.screen.blit(back, (72, 828))
 
     def run(self):
         while True:
@@ -2664,4 +2590,3 @@ class Game:
             # 根据游戏速度调整FPS
             target_fps = int(FPS * self.game_speed)
             self.clock.tick(target_fps)
-

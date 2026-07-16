@@ -23,6 +23,15 @@ CYAN = (0, 255, 255)
 NEON_BLUE = (0, 200, 255)
 UI_BG = (20, 20, 30, 220)
 
+# Unified interface palette. Bright colors are reserved for state and emphasis.
+UI_PANEL = (12, 16, 26, 238)
+UI_PANEL_ALT = (17, 23, 36, 238)
+UI_BORDER = (55, 70, 92)
+UI_MUTED = (145, 156, 178)
+UI_PRIMARY = NEON_BLUE
+UI_ACCENT = (255, 196, 64)
+UI_DANGER = (255, 78, 96)
+
 
 # 字体加载器
 def get_font(size):
@@ -39,6 +48,9 @@ FONT_S = get_font(20)
 FONT_M = get_font(28)
 FONT_L = get_font(60)
 FONT_ICON = get_font(40)  # 专门用于渲染Emoji图标
-
+FONT_XS = get_font(16)
+FONT_CARD = get_font(24)
+FONT_TITLE = get_font(52)
+FONT_HERO = get_font(72)
 
 
