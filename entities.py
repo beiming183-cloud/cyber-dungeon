@@ -1,6 +1,7 @@
 import pygame
 import random
 import math
+import heapq
 from config import *
 from visual_effects import VisualUtils, Particle
 
@@ -18,15 +19,31 @@ class Entity:
         self.alive = True
         self.image = None
         self.hurt_timer = 0
+        self._move_remainder_x = 0.0
+        self._move_remainder_y = 0.0
 
     def move(self, tiles):
         """更稳健的物理移动系统"""
-        # Split fast movement into small steps so sprinting enemies and players
-        # cannot tunnel through a one-tile wall between frames.
-        steps = max(1, int(math.ceil(max(abs(self.vx), abs(self.vy)) / 4.0)))
-        step_x = self.vx / steps
-        step_y = self.vy / steps
-        for _ in range(steps):
+        # Preserve fractional speed across frames, then split the resulting
+        # integer motion into collision-safe substeps. This prevents both fast
+        # tunneling and slow diagonal enemies freezing at corridor corners.
+        requested_x = self.vx + self._move_remainder_x
+        requested_y = self.vy + self._move_remainder_y
+        move_x = math.trunc(requested_x)
+        move_y = math.trunc(requested_y)
+        self._move_remainder_x = requested_x - move_x
+        self._move_remainder_y = requested_y - move_y
+        steps = max(1, int(math.ceil(max(abs(move_x), abs(move_y)) / 4.0)))
+        previous_x = 0
+        previous_y = 0
+        for step in range(1, steps + 1):
+            cumulative_x = int(round(move_x * step / steps))
+            cumulative_y = int(round(move_y * step / steps))
+            step_x = cumulative_x - previous_x
+            step_y = cumulative_y - previous_y
+            previous_x = cumulative_x
+            previous_y = cumulative_y
+
             self.rect.x += step_x
             hit_list = self.get_collisions(tiles)
             for tile in hit_list:
@@ -34,6 +51,7 @@ class Entity:
                     self.rect.right = tile.left
                 elif step_x < 0:
                     self.rect.left = tile.right
+                self._move_remainder_x = 0.0
 
             self.rect.y += step_y
             hit_list = self.get_collisions(tiles)
@@ -42,6 +60,7 @@ class Entity:
                     self.rect.bottom = tile.top
                 elif step_y < 0:
                     self.rect.top = tile.bottom
+                self._move_remainder_y = 0.0
 
     def get_collisions(self, tiles):
         hits = []
@@ -567,6 +586,21 @@ class Player(Entity):
         w_rect = rot_weapon.get_rect(center=(wx, wy))
         surface.blit(rot_weapon, w_rect)
 
+        # World-space health bar keeps combat readable even when the HUD is
+        # crowded or the player is focused near the center of the map.
+        bar_width = 70
+        bar_height = 8
+        bar_rect = pygame.Rect(cx - bar_width // 2, cy - 45, bar_width, bar_height)
+        pygame.draw.rect(surface, (5, 8, 14), bar_rect.inflate(4, 4), border_radius=4)
+        pygame.draw.rect(surface, (40, 46, 58), bar_rect, border_radius=4)
+        hp_ratio = max(0.0, min(1.0, self.hp / max(1, self.max_hp)))
+        hp_color = GREEN if hp_ratio > 0.55 else ORANGE if hp_ratio > 0.25 else RED
+        if hp_ratio > 0:
+            pygame.draw.rect(surface, hp_color,
+                             (bar_rect.x, bar_rect.y, int(bar_rect.width * hp_ratio), bar_height),
+                             border_radius=4)
+        pygame.draw.rect(surface, (*self.color[:3],), bar_rect.inflate(2, 2), 1, border_radius=4)
+
         # 5. 绘制防护盾 - 淡紫色，更明显
         if 'shield' in self.passive_skills and self.passive_skills['shield']['level'] > 0:
             shield_level = self.passive_skills['shield']['level']
@@ -660,7 +694,8 @@ class Enemy(Entity):
         self.hp = self.max_hp = hp
         if kind == 'dragon':
             center = self.rect.center
-            self.rect.size = (96, 96)
+            # Keep the imposing 96px art while using a corridor-safe hitbox.
+            self.rect.size = (56, 56)
             self.rect.center = center
         icon_size = 96 if kind == 'dragon' else 50 if is_elite else 40
         self.image = VisualUtils.create_enemy_icon(kind, color, icon_size, is_elite)
@@ -685,26 +720,94 @@ class Enemy(Entity):
         self.boss_phase = 1
         self.boss_attack_timer = 0
         self.boss_dash_timer = 0
+        self.path_tiles = []
+        self.path_recalc_timer = 0
+        self.last_target_tile = None
+
+    @staticmethod
+    def _walkable_tile(tiles, tile_x, tile_y):
+        return (0 <= tile_y < len(tiles) and 0 <= tile_x < len(tiles[0])
+                and tiles[tile_y][tile_x] == 0)
+
+    def _rebuild_path(self, target, tiles):
+        start = (int(self.rect.centerx // TILE_SIZE), int(self.rect.centery // TILE_SIZE))
+        goal = (int(target.rect.centerx // TILE_SIZE), int(target.rect.centery // TILE_SIZE))
+        self.last_target_tile = goal
+        self.path_recalc_timer = 24 + random.randint(0, 12)
+        if start == goal:
+            self.path_tiles = []
+            return
+
+        frontier = [(0, start)]
+        came_from = {start: None}
+        cost_so_far = {start: 0}
+        visited = 0
+        while frontier and visited < 1200:
+            _, current = heapq.heappop(frontier)
+            visited += 1
+            if current == goal:
+                break
+            for offset_x, offset_y in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                neighbor = (current[0] + offset_x, current[1] + offset_y)
+                if not self._walkable_tile(tiles, neighbor[0], neighbor[1]):
+                    continue
+                new_cost = cost_so_far[current] + 1
+                if neighbor not in cost_so_far or new_cost < cost_so_far[neighbor]:
+                    cost_so_far[neighbor] = new_cost
+                    priority = new_cost + abs(goal[0] - neighbor[0]) + abs(goal[1] - neighbor[1])
+                    heapq.heappush(frontier, (priority, neighbor))
+                    came_from[neighbor] = current
+
+        if goal not in came_from:
+            self.path_tiles = []
+            return
+        path = []
+        current = goal
+        while current and current != start:
+            path.append(current)
+            current = came_from[current]
+        path.reverse()
+        self.path_tiles = path
+
+    def _navigation_vector(self, target, tiles):
+        target_tile = (int(target.rect.centerx // TILE_SIZE), int(target.rect.centery // TILE_SIZE))
+        self.path_recalc_timer -= 1
+        if self.path_recalc_timer <= 0 or target_tile != self.last_target_tile:
+            self._rebuild_path(target, tiles)
+
+        while self.path_tiles:
+            waypoint = self.path_tiles[0]
+            waypoint_x = (waypoint[0] + 0.5) * TILE_SIZE
+            waypoint_y = (waypoint[1] + 0.5) * TILE_SIZE
+            dx = waypoint_x - self.rect.centerx
+            dy = waypoint_y - self.rect.centery
+            if math.hypot(dx, dy) < 10:
+                self.path_tiles.pop(0)
+                continue
+            return dx, dy
+        return target.rect.centerx - self.rect.centerx, target.rect.centery - self.rect.centery
 
     def ai_move(self, target, tiles):
-        # 增强的AI行为
-        dx = target.rect.centerx - self.rect.centerx
-        dy = target.rect.centery - self.rect.centery
-        dist = math.hypot(dx, dy)
+        # All enemies pursue the target across the full map. A cached A* route
+        # supplies corridor waypoints so direct steering does not pin them into
+        # walls or make distant enemies idle.
+        direct_dx = target.rect.centerx - self.rect.centerx
+        direct_dy = target.rect.centery - self.rect.centery
+        direct_dist = math.hypot(direct_dx, direct_dy)
+        nav_dx, nav_dy = self._navigation_vector(target, tiles)
+        nav_dist = math.hypot(nav_dx, nav_dy) or 1
+        dx, dy, dist = nav_dx, nav_dy, nav_dist
 
         if self.stun_timer > 0:
             self.stun_timer -= 1
             self.vx = 0
             self.vy = 0
-        elif 0 < dist < 600:
+        elif direct_dist > 0:
             if self.behavior == 'aggressive':
-                # 激进型 - 稍微更快
                 speed_mult = 1.1
             elif self.behavior == 'fast':
-                # 快速型 - 稍微更快
                 speed_mult = 1.05
             elif self.behavior == 'slow':
-                # 缓慢型 - 更低速度
                 speed_mult = 0.6
             elif self.behavior == 'boss':
                 health_ratio = self.hp / max(1, self.max_hp)
@@ -714,19 +817,19 @@ class Enemy(Entity):
                     self.boss_attack_timer = 0
                     self.boss_dash_timer = 26
 
-                if self.boss_phase == 1 and dist > 100:
+                if self.boss_phase == 1 and direct_dist < 170:
                     speed_mult = 0.82
                     predict_x = target.rect.centerx + target.vx * 10
                     predict_y = target.rect.centery + target.vy * 10
                     dx = predict_x - self.rect.centerx
                     dy = predict_y - self.rect.centery
-                    dist = math.hypot(dx, dy)
-                elif self.boss_phase == 2:
+                    dist = math.hypot(dx, dy) or 1
+                elif self.boss_phase == 2 and direct_dist < 190:
                     speed_mult = 1.0
-                    dx, dy = dx - dy * 0.55, dy + dx * 0.55
-                    dist = math.hypot(dx, dy)
+                    dx, dy = direct_dx - direct_dy * 0.55, direct_dy + direct_dx * 0.55
+                    dist = math.hypot(dx, dy) or 1
                 else:
-                    speed_mult = 1.28
+                    speed_mult = 1.28 if self.boss_phase == 3 else 0.9
 
                 if self.boss_dash_timer > 0:
                     self.boss_dash_timer -= 1
@@ -1094,19 +1197,26 @@ class TreasureChest:
     def draw(self, surface, camera):
         # 获取相机偏移后的位置
         cx, cy = camera.apply(self.x, self.y + self.bob_offset)
-        
-        # 发光效果 - 金色
+        locked = getattr(self, 'route_locked', False)
+        chest_color = (80, 100, 125) if locked else YELLOW
+
         glow_size = 40 + 8 * math.sin(self.pulse)
         glow_surf = pygame.Surface((glow_size * 2, glow_size * 2), pygame.SRCALPHA)
-        pygame.draw.circle(glow_surf, (*YELLOW[:3], 150), (glow_size, glow_size), glow_size)
+        pygame.draw.circle(glow_surf, (*chest_color[:3], 55 if locked else 150), (glow_size, glow_size), glow_size)
         surface.blit(glow_surf, (cx - glow_size, cy - glow_size))
         
         # 绘制宝箱图标
-        icon_surf = VisualUtils.create_chest_icon(YELLOW, 50)
+        icon_surf = VisualUtils.create_chest_icon(chest_color, 50)
         surface.blit(icon_surf, (cx - 25, cy - 25))
+
+        if locked:
+            lock_body = pygame.Rect(cx - 7, cy - 3, 14, 12)
+            pygame.draw.rect(surface, (190, 205, 225), lock_body, border_radius=2)
+            pygame.draw.arc(surface, (190, 205, 225), (cx - 6, cy - 12, 12, 14), math.pi, math.pi * 2, 3)
+            pygame.draw.circle(surface, (35, 43, 58), (cx, cy + 2), 2)
         
         # 绘制闪光效果
-        if not self.opened:
+        if not self.opened and not locked:
             flash_size = 30 + 5 * math.sin(self.pulse * 2)
             flash_surf = pygame.Surface((flash_size * 2, flash_size * 2), pygame.SRCALPHA)
             pygame.draw.circle(flash_surf, (*WHITE[:3], 100), (flash_size, flash_size), flash_size // 2)

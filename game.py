@@ -169,8 +169,10 @@ class Game:
         gen = DungeonGenerator()
         self.map_w, self.map_h = 60, 60
         self.tiles, self.rooms = gen.generate(self.map_w, self.map_h)
+        self.route_rooms = getattr(gen, 'main_rooms', sorted(self.rooms, key=lambda room: room.centerx))
+        self.route_points = [room.center for room in self.route_rooms]
 
-        start_pos = self.rooms[0].center
+        start_pos = self.route_rooms[0].center
         # 如果是新地图，保持玩家属性；如果是第一张地图，创建新玩家
         if not hasattr(self, 'player') or self.current_map == 1:
             self.player = Player(start_pos[0] * TILE_SIZE, start_pos[1] * TILE_SIZE, self.selected_char,
@@ -205,6 +207,8 @@ class Game:
         self.upgrade_charge_required = 2
         self.skill_choices_made = 0
         self.chests_opened = 0
+        self.route_chests_opened = 0
+        self.exploration_complete = False
         
         # 重置波次状态
         self.wave_active = False
@@ -248,26 +252,46 @@ class Game:
                     self.map_enemy_count += 1
 
         self.spawn_exploration_chests()
-        self.add_feedback("跟随指引寻找能量宝箱，首波将在数秒后抵达", UI_PRIMARY, 300)
+        self.add_feedback("主线已标记：从西侧入口向东推进，依次激活路线终端", UI_PRIMARY, 360)
 
     def spawn_exploration_chests(self):
-        """在远离出生点的房间放置探索目标。"""
-        if len(self.rooms) <= 1:
+        """Place ordered objectives along the west-to-east critical route."""
+        if len(self.route_rooms) <= 1:
             return
-        start = self.rooms[0].center
-        candidates = sorted(
-            self.rooms[1:],
-            key=lambda room: abs(room.centerx - start[0]) + abs(room.centery - start[1]),
-            reverse=True,
-        )
-        chest_count = min(len(candidates), 3 + getattr(self.player, 'extra_chests', 0))
-        pool = candidates[:max(chest_count * 2, chest_count)]
-        selected_rooms = random.sample(pool, chest_count) if len(pool) >= chest_count else pool
+        chest_count = min(len(self.route_rooms) - 1, 3 + getattr(self.player, 'extra_chests', 0))
+        last_index = len(self.route_rooms) - 1
+        route_indices = []
+        for stage in range(1, chest_count + 1):
+            route_index = max(1, int(round(stage * last_index / chest_count)))
+            if route_index not in route_indices:
+                route_indices.append(route_index)
+        while len(route_indices) < chest_count:
+            candidate = min(last_index, route_indices[-1] + 1 if route_indices else 1)
+            if candidate not in route_indices:
+                route_indices.append(candidate)
+            else:
+                break
+
+        stage_names = ('前哨终端', '中继密库', '深层节点', '东境核心')
+        selected_rooms = [self.route_rooms[index] for index in route_indices]
         for index, room in enumerate(selected_rooms):
             chest = TreasureChest(room.centerx * TILE_SIZE, room.centery * TILE_SIZE)
             chest.reward_type = ('coins', 'recovery', 'charge')[index % 3]
+            chest.route_order = index
+            chest.route_name = stage_names[min(index, len(stage_names) - 1)]
+            chest.route_locked = index > 0
+            chest.last_lock_notice = -9999
             self.treasure_chests.append(chest)
         self.objective_chests_total = len(self.treasure_chests)
+
+    def get_current_route_target(self):
+        route_targets = [
+            chest for chest in self.treasure_chests
+            if hasattr(chest, 'route_order') and not chest.opened
+        ]
+        if not route_targets:
+            return None
+        return min(route_targets, key=lambda chest: chest.route_order)
 
     def add_feedback(self, text, color=WHITE, duration=150):
         self.feedback_messages.append({'text': text, 'color': color, 'timer': duration})
@@ -1576,6 +1600,13 @@ class Game:
                 chest.update()
                 # 检查玩家与宝箱的碰撞
                 if chest.rect.colliderect(self.player.rect) and not chest.opened:
+                    if getattr(chest, 'route_locked', False):
+                        if self.game_time - getattr(chest, 'last_lock_notice', -9999) > 120:
+                            current = self.get_current_route_target()
+                            current_name = getattr(current, 'route_name', '上一处路线终端') if current else '上一处路线终端'
+                            self.add_feedback(f"终端锁定：请先激活 {current_name}", UI_DANGER, 150)
+                            chest.last_lock_notice = self.game_time
+                        continue
                     chest.opened = True
                     reward_type = getattr(chest, 'reward_type', 'coins')
                     if reward_type == 'recovery':
@@ -1595,9 +1626,27 @@ class Game:
                         self.player.coins += reward
                         reward_text = f"获得金币 {reward}"
                     self.chests_opened += 1
+                    if hasattr(chest, 'route_order'):
+                        self.route_chests_opened += 1
+                        if self.route_chests_opened >= self.objective_chests_total:
+                            self.exploration_complete = True
+                            self.add_feedback("主线探索完成：东境核心已激活", GREEN, 260)
+                        else:
+                            next_stage = self.route_chests_opened + 1
+                            self.add_feedback(
+                                f"路线阶段 {self.route_chests_opened}/{self.objective_chests_total} 完成，继续向东前进",
+                                UI_PRIMARY,
+                                220,
+                            )
                     self.shop_available = True
                     self.add_feedback(f"宝箱开启：{reward_text}", UI_ACCENT, 210)
                     self.treasure_chests.remove(chest)
+                    remaining_route = sorted(
+                        [target for target in self.treasure_chests if hasattr(target, 'route_order')],
+                        key=lambda target: target.route_order,
+                    )
+                    if remaining_route:
+                        remaining_route[0].route_locked = False
 
             # 检查成就
             self.check_achievements()
@@ -2463,6 +2512,8 @@ class Game:
                     color = (25, 25, 35) if (r + c) % 2 == 0 else (20, 20, 30)
                     pygame.draw.rect(self.screen, color, (*pos, TILE_SIZE, TILE_SIZE))
 
+        self.draw_route_world_guidance()
+
         # 实体绘制
         for e in self.enemies: e.draw(self.screen, self.camera)
         for item in self.items: item.draw(self.screen, self.camera)  # 绘制道具
@@ -2475,6 +2526,51 @@ class Game:
         for p in self.projectiles: p.draw(self.screen, self.camera)
         self.draw_combat_effects()
         for p in self.particles: p.draw(self.screen, self.camera)
+
+    def draw_route_world_guidance(self):
+        if not getattr(self, 'route_points', None):
+            return
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        screen_points = [self.camera.apply(x * TILE_SIZE, y * TILE_SIZE) for x, y in self.route_points]
+        for index in range(len(screen_points) - 1):
+            start, end = screen_points[index], screen_points[index + 1]
+            color = GREEN if index < self.route_chests_opened else UI_PRIMARY
+            alpha = 75 if index < self.route_chests_opened else 42
+            pygame.draw.line(overlay, (*color[:3], alpha), start, end, 3)
+            dx, dy = end[0] - start[0], end[1] - start[1]
+            length = math.hypot(dx, dy) or 1
+            for distance in range(55, int(length), 90):
+                px = start[0] + dx / length * distance
+                py = start[1] + dy / length * distance
+                angle = math.atan2(dy, dx)
+                tip = (px + math.cos(angle) * 9, py + math.sin(angle) * 9)
+                left = (px + math.cos(angle + 2.45) * 7, py + math.sin(angle + 2.45) * 7)
+                right = (px + math.cos(angle - 2.45) * 7, py + math.sin(angle - 2.45) * 7)
+                pygame.draw.polygon(overlay, (*color[:3], min(150, alpha + 55)), [tip, left, right])
+
+        target = self.get_current_route_target()
+        if target:
+            tx, ty = self.camera.apply(target.x, target.y)
+            pulse = int(8 * abs(math.sin(pygame.time.get_ticks() * 0.004)))
+            pygame.draw.circle(overlay, (*UI_ACCENT[:3], 120), (tx, ty), 42 + pulse, 3)
+            pygame.draw.line(overlay, (*UI_ACCENT[:3], 125), (tx, ty - 100), (tx, ty - 34), 3)
+            marker = [(tx, ty - 22), (tx - 10, ty - 40), (tx + 10, ty - 40)]
+            pygame.draw.polygon(overlay, (*UI_ACCENT[:3], 210), marker)
+
+            px, py = self.camera.apply(*self.player.rect.center)
+            dx, dy = tx - px, ty - py
+            distance = math.hypot(dx, dy) or 1
+            angle = math.atan2(dy, dx)
+            for step in (80, 145, 210):
+                if step >= distance - 35:
+                    continue
+                cx = px + math.cos(angle) * step
+                cy = py + math.sin(angle) * step
+                tip = (cx + math.cos(angle) * 13, cy + math.sin(angle) * 13)
+                left = (cx + math.cos(angle + 2.45) * 10, cy + math.sin(angle + 2.45) * 10)
+                right = (cx + math.cos(angle - 2.45) * 10, cy + math.sin(angle - 2.45) * 10)
+                pygame.draw.polygon(overlay, (*UI_PRIMARY[:3], 170), [tip, left, right])
+        self.screen.blit(overlay, (0, 0))
 
     def draw_ui(self):
         # 安全检查
@@ -2605,79 +2701,125 @@ class Game:
                 print(f"技能渲染错误: {e}")
                 continue
 
-        # 2. 左上角状态
-        info_rect = pygame.Rect(14, 14, 284, 112)
-        draw_panel(self.screen, info_rect, self.player.color, False)
-        hp_label = FONT_XS.render("生命值", True, UI_MUTED)
-        hp_value = FONT_XS.render(f"{max(0, int(self.player.hp))} / {int(self.player.max_hp)}", True, WHITE)
-        self.screen.blit(hp_label, (info_rect.left + 16, info_rect.top + 13))
-        self.screen.blit(hp_value, (info_rect.right - hp_value.get_width() - 16, info_rect.top + 13))
-
-        hp_bg = pygame.Rect(info_rect.left + 16, info_rect.top + 41, info_rect.width - 32, 12)
-        pygame.draw.rect(self.screen, (42, 47, 58), hp_bg, border_radius=6)
-        hp_ratio = max(0.0, min(1.0, self.player.hp / max(1, self.player.max_hp)))
-        hp_fill = pygame.Rect(hp_bg.x, hp_bg.y, int(hp_bg.width * hp_ratio), hp_bg.height)
-        if hp_fill.width:
-            pygame.draw.rect(self.screen, UI_DANGER, hp_fill, border_radius=6)
-
-        coin_text = FONT_XS.render(f"金币  {self.player.coins}", True, UI_ACCENT)
-        time_text = FONT_XS.render(f"时间  {int(self.game_time / 60)}s", True, WHITE)
-        self.screen.blit(coin_text, (info_rect.left + 16, info_rect.top + 72))
-        self.screen.blit(time_text, (info_rect.right - time_text.get_width() - 16, info_rect.top + 72))
-
-        status_parts = []
-        if hasattr(self.player, 'lives') and self.player.lives > 1:
-            status_parts.append(f"生命 {self.player.lives}")
-        if hasattr(self.player, 'is_invincible') and self.player.is_invincible:
-            status_parts.append(f"无敌 {int(self.player.invincible_timer / 60)}s")
-        if hasattr(self, 'game_speed') and self.game_speed > 1.0:
-            status_parts.append(f"{self.game_speed}x")
-        if status_parts:
-            status_text = FONT_XS.render("  |  ".join(status_parts), True, UI_PRIMARY)
-            self.screen.blit(status_text, (info_rect.left + 16, info_rect.bottom + 8))
-
-        if hasattr(self, 'shop_available') and self.shop_available and not self.shop_active:
-            shop_hint = FONT_XS.render("B  打开商店", True, UI_ACCENT)
-            self.screen.blit(shop_hint, (info_rect.left + 16, info_rect.bottom + 34))
-
-        charge_rect = pygame.Rect(14, 132, 284, 46)
-        draw_panel(self.screen, charge_rect, UI_ACCENT, False)
-        charge_label = FONT_XS.render("构筑能量", True, UI_MUTED)
-        charge_value = FONT_XS.render(f"{self.upgrade_charge} / {self.upgrade_charge_required}", True, UI_ACCENT)
-        self.screen.blit(charge_label, (charge_rect.left + 12, charge_rect.top + 6))
-        self.screen.blit(charge_value, (charge_rect.right - charge_value.get_width() - 12, charge_rect.top + 6))
-        charge_bg = pygame.Rect(charge_rect.left + 12, charge_rect.bottom - 12, charge_rect.width - 24, 5)
-        pygame.draw.rect(self.screen, (45, 48, 58), charge_bg, border_radius=3)
-        charge_ratio = min(1.0, self.upgrade_charge / max(1, self.upgrade_charge_required))
-        pygame.draw.rect(self.screen, UI_ACCENT, (charge_bg.x, charge_bg.y, int(charge_bg.width * charge_ratio), 5), border_radius=3)
-
-        # 3. 角色专属被动显示
-        if self.player.character_passive:
-            passive_rect = pygame.Rect(SCREEN_WIDTH - 258, 14, 244, 42)
-            draw_panel(self.screen, passive_rect, self.player.color, True)
-            name_text = FONT_XS.render(self.player.character_passive['name'], True, self.player.color)
-            self.screen.blit(name_text, name_text.get_rect(center=passive_rect.center))
-
-        # 4. 其他被动技能显示（右上角）
-        if self.player.passive_skills:
-            passive_y = 68
-            for skill_id, skill_info in self.player.passive_skills.items():
-                # 只显示存在于available_passives中的技能，避免KeyError
-                if skill_id in self.player.available_passives:
-                    skill_data = self.player.available_passives[skill_id]
-                    level = skill_info['level']
-                    defensive = any(token in skill_id for token in ('shield', 'health', 'defense', 'armor'))
-                    icon_type = 'survival' if defensive else 'combat'
-                    icon_surf = VisualUtils.create_talent_icon(icon_type, skill_data['color'], 30)
-                    slot_rect = pygame.Rect(SCREEN_WIDTH - 112, passive_y, 98, 34)
-                    draw_panel(self.screen, slot_rect, skill_data['color'], False)
-                    self.screen.blit(icon_surf, (slot_rect.left + 6, slot_rect.top + 2))
-                    level_text = FONT_XS.render(f"Lv.{level}", True, skill_data['color'])
-                    self.screen.blit(level_text, (slot_rect.left + 42, slot_rect.top + 8))
-                    passive_y += 40
+        self.draw_player_status_panel()
+        self.draw_buff_panel()
 
         self.draw_objective_guidance()
         self.draw_feedback_messages()
+
+    def draw_player_status_panel(self):
+        info_rect = pygame.Rect(14, 14, 310, 154)
+        draw_panel(self.screen, info_rect, self.player.color, False)
+        char_name = next(
+            (option['name'] for option in self.char_options if option['type'] == self.player.char_type),
+            '作战角色',
+        )
+        name_text = FONT_XS.render(f"{char_name}  LV.{self.player.level}", True, self.player.color)
+        hp_value = FONT_XS.render(f"{max(0, int(self.player.hp))} / {int(self.player.max_hp)}", True, WHITE)
+        self.screen.blit(name_text, (info_rect.left + 16, info_rect.top + 12))
+        self.screen.blit(hp_value, (info_rect.right - hp_value.get_width() - 16, info_rect.top + 12))
+
+        hp_bg = pygame.Rect(info_rect.left + 16, info_rect.top + 40, info_rect.width - 32, 14)
+        pygame.draw.rect(self.screen, (42, 47, 58), hp_bg, border_radius=7)
+        hp_ratio = max(0.0, min(1.0, self.player.hp / max(1, self.player.max_hp)))
+        hp_color = GREEN if hp_ratio > 0.55 else ORANGE if hp_ratio > 0.25 else UI_DANGER
+        hp_fill = pygame.Rect(hp_bg.x, hp_bg.y, int(hp_bg.width * hp_ratio), hp_bg.height)
+        if hp_fill.width:
+            pygame.draw.rect(self.screen, hp_color, hp_fill, border_radius=7)
+
+        exp_label = FONT_XS.render("经验", True, UI_MUTED)
+        exp_value = FONT_XS.render(f"{int(self.player.exp)} / {int(self.player.exp_max)}", True, WHITE)
+        self.screen.blit(exp_label, (info_rect.left + 16, info_rect.top + 66))
+        self.screen.blit(exp_value, (info_rect.right - exp_value.get_width() - 16, info_rect.top + 66))
+        exp_bg = pygame.Rect(info_rect.left + 62, info_rect.top + 71, info_rect.width - 154, 6)
+        pygame.draw.rect(self.screen, (38, 44, 56), exp_bg, border_radius=3)
+        exp_ratio = max(0.0, min(1.0, self.player.exp / max(1, self.player.exp_max)))
+        pygame.draw.rect(self.screen, UI_PRIMARY, (exp_bg.x, exp_bg.y, int(exp_bg.width * exp_ratio), 6), border_radius=3)
+
+        coin_text = FONT_XS.render(f"金币 {self.player.coins}", True, UI_ACCENT)
+        time_text = FONT_XS.render(f"时间 {int(self.game_time / 60)}s", True, WHITE)
+        lives_text = FONT_XS.render(f"生命 {getattr(self.player, 'lives', 1)}", True, UI_PRIMARY)
+        self.screen.blit(coin_text, (info_rect.left + 16, info_rect.top + 99))
+        self.screen.blit(time_text, (info_rect.centerx - time_text.get_width() // 2, info_rect.top + 99))
+        self.screen.blit(lives_text, (info_rect.right - lives_text.get_width() - 16, info_rect.top + 99))
+
+        footer = []
+        if self.shop_available and not self.shop_active:
+            footer.append("B 商店")
+        if self.game_speed > 1.0:
+            footer.append(f"速度 {self.game_speed}x")
+        footer.append(f"地图 {self.current_map}")
+        footer_text = FONT_XS.render("  ·  ".join(footer), True, UI_MUTED)
+        self.screen.blit(footer_text, (info_rect.left + 16, info_rect.top + 126))
+
+        charge_rect = pygame.Rect(14, 176, 310, 50)
+        draw_panel(self.screen, charge_rect, UI_ACCENT, False)
+        charge_label = FONT_XS.render("构筑能量", True, UI_MUTED)
+        charge_value = FONT_XS.render(f"{self.upgrade_charge} / {self.upgrade_charge_required}", True, UI_ACCENT)
+        self.screen.blit(charge_label, (charge_rect.left + 14, charge_rect.top + 7))
+        self.screen.blit(charge_value, (charge_rect.right - charge_value.get_width() - 14, charge_rect.top + 7))
+        charge_bg = pygame.Rect(charge_rect.left + 14, charge_rect.bottom - 13, charge_rect.width - 28, 6)
+        pygame.draw.rect(self.screen, (45, 48, 58), charge_bg, border_radius=3)
+        charge_ratio = min(1.0, self.upgrade_charge / max(1, self.upgrade_charge_required))
+        if charge_ratio > 0:
+            pygame.draw.rect(self.screen, UI_ACCENT, (charge_bg.x, charge_bg.y, int(charge_bg.width * charge_ratio), 6), border_radius=3)
+
+    def collect_active_buffs(self):
+        buffs = []
+        if self.player.character_passive:
+            buffs.append((self.player.character_passive['name'], '角色特性', self.player.color, None))
+
+        talent_names = {
+            'combat': ('火力协议', '伤害 +8%', ORANGE),
+            'survival': ('稳态装甲', '生命 +15% / 减伤', NEON_BLUE),
+            'exploration': ('寻宝协议', '金币与探索加成', YELLOW),
+        }
+        if self.player.talent in talent_names:
+            name, detail, color = talent_names[self.player.talent]
+            buffs.append((name, detail, color, None))
+
+        invincible_time = max(getattr(self.player, 'invincible_timer', 0), getattr(self.player, 'guardian_aura_timer', 0))
+        if self.player.is_invincible and invincible_time > 0:
+            buffs.append(('无敌', f"{max(1, int(math.ceil(invincible_time / 60)))}s", YELLOW, 'guardian_aura'))
+        if getattr(self.player, 'blood_rage_timer', 0) > 0:
+            buffs.append(('鲜血渴望', f"{int(math.ceil(self.player.blood_rage_timer / 60))}s", RED, 'blood_rage'))
+        if getattr(self.player, 'bounce_shield_active', False):
+            buffs.append(('弹性护罩', f"{int(math.ceil(self.player.bounce_shield_timer / 60))}s", NEON_BLUE, 'bounce_shield'))
+
+        for skill_id, skill_info in self.player.passive_skills.items():
+            if skill_id not in self.player.available_passives or skill_info.get('level', 0) <= 0:
+                continue
+            skill_data = self.player.available_passives[skill_id]
+            buffs.append((skill_data['name'], f"Lv.{skill_info['level']}", skill_data['color'], skill_id))
+        return buffs
+
+    def draw_buff_panel(self):
+        buffs = self.collect_active_buffs()
+        panel_w = 304
+        row_h = 31
+        panel_h = 42 + row_h * max(1, len(buffs))
+        panel = pygame.Rect(SCREEN_WIDTH - panel_w - 14, 14, panel_w, panel_h)
+        draw_panel(self.screen, panel, self.player.color, False)
+        title = FONT_XS.render("BUFF / STATUS", True, UI_MUTED)
+        count = FONT_XS.render(str(len(buffs)), True, self.player.color)
+        self.screen.blit(title, (panel.left + 14, panel.top + 10))
+        self.screen.blit(count, (panel.right - count.get_width() - 14, panel.top + 10))
+
+        if not buffs:
+            empty = FONT_XS.render("暂无增益", True, UI_MUTED)
+            self.screen.blit(empty, (panel.left + 14, panel.top + 43))
+            return
+        for index, (name, detail, color, icon_id) in enumerate(buffs):
+            y = panel.top + 38 + index * row_h
+            if icon_id:
+                icon = VisualUtils.create_skill_icon(icon_id, color, 24)
+                self.screen.blit(icon, (panel.left + 10, y + 2))
+            else:
+                pygame.draw.circle(self.screen, color, (panel.left + 22, y + 14), 5)
+            name_text = FONT_XS.render(name, True, color)
+            detail_text = FONT_XS.render(detail, True, WHITE)
+            self.screen.blit(name_text, (panel.left + 42, y + 6))
+            self.screen.blit(detail_text, (panel.right - detail_text.get_width() - 12, y + 6))
 
     def draw_objective_guidance(self):
         boss = next((enemy for enemy in self.enemies if enemy.alive and enemy.behavior == 'boss'), None)
@@ -2695,36 +2837,50 @@ class Game:
             pygame.draw.rect(self.screen, UI_DANGER, (hp_bg.x, hp_bg.y, int(hp_bg.width * ratio), 5), border_radius=3)
             objective_y += 50
 
-        nearest = None
-        if self.treasure_chests:
-            nearest = min(
-                self.treasure_chests,
-                key=lambda chest: math.hypot(chest.x - self.player.rect.centerx, chest.y - self.player.rect.centery),
-            )
-
-        if nearest:
-            dx = nearest.x - self.player.rect.centerx
-            dy = nearest.y - self.player.rect.centery
+        target = self.get_current_route_target()
+        if target:
+            dx = target.x - self.player.rect.centerx
+            dy = target.y - self.player.rect.centery
             distance = max(1, int(math.hypot(dx, dy) / TILE_SIZE))
             angle = math.atan2(dy, dx)
-            arrow_center = (SCREEN_WIDTH // 2 - 176, objective_y + 21)
-            tip = (arrow_center[0] + math.cos(angle) * 11, arrow_center[1] + math.sin(angle) * 11)
-            left = (arrow_center[0] + math.cos(angle + 2.5) * 8, arrow_center[1] + math.sin(angle + 2.5) * 8)
-            right = (arrow_center[0] + math.cos(angle - 2.5) * 8, arrow_center[1] + math.sin(angle - 2.5) * 8)
-            guide_rect = pygame.Rect(SCREEN_WIDTH // 2 - 205, objective_y, 410, 42)
+            if abs(dx) > abs(dy) * 1.25:
+                direction_label = '向东推进' if dx > 0 else '向西折返'
+            elif abs(dy) > abs(dx) * 1.25:
+                direction_label = '向南推进' if dy > 0 else '向北推进'
+            else:
+                horizontal = '东' if dx > 0 else '西'
+                vertical = '南' if dy > 0 else '北'
+                direction_label = f"向{horizontal}{vertical}推进"
+
+            guide_rect = pygame.Rect(SCREEN_WIDTH // 2 - 270, objective_y, 540, 58)
             draw_panel(self.screen, guide_rect, UI_PRIMARY, False)
+            arrow_center = (guide_rect.left + 30, guide_rect.centery - 3)
+            tip = (arrow_center[0] + math.cos(angle) * 15, arrow_center[1] + math.sin(angle) * 15)
+            left = (arrow_center[0] + math.cos(angle + 2.5) * 10, arrow_center[1] + math.sin(angle + 2.5) * 10)
+            right = (arrow_center[0] + math.cos(angle - 2.5) * 10, arrow_center[1] + math.sin(angle - 2.5) * 10)
             pygame.draw.polygon(self.screen, UI_PRIMARY, [tip, left, right])
-            remaining = len(self.treasure_chests)
-            guide = FONT_XS.render(f"探索目标：能量宝箱  {distance} 格  ·  剩余 {remaining}", True, WHITE)
-            self.screen.blit(guide, (guide_rect.left + 50, guide_rect.top + 11))
-        elif self.wave_cooldown > 0:
-            guide_rect = pygame.Rect(SCREEN_WIDTH // 2 - 180, objective_y, 360, 42)
-            draw_panel(self.screen, guide_rect, UI_PRIMARY, False)
-            guide = FONT_XS.render("探索完成，准备迎接下一波", True, WHITE)
+            stage = min(self.objective_chests_total, self.route_chests_opened + 1)
+            stage_text = FONT_XS.render(
+                f"主线 {stage}/{self.objective_chests_total}  ·  {getattr(target, 'route_name', '路线终端')}",
+                True,
+                UI_PRIMARY,
+            )
+            direction_text = FONT_XS.render(f"{direction_label}  ·  距离 {distance} 格", True, WHITE)
+            self.screen.blit(stage_text, (guide_rect.left + 56, guide_rect.top + 8))
+            self.screen.blit(direction_text, (guide_rect.left + 56, guide_rect.top + 29))
+            progress_bg = pygame.Rect(guide_rect.right - 122, guide_rect.top + 13, 102, 6)
+            pygame.draw.rect(self.screen, (42, 48, 58), progress_bg, border_radius=3)
+            progress = self.route_chests_opened / max(1, self.objective_chests_total)
+            if progress > 0:
+                pygame.draw.rect(self.screen, GREEN, (progress_bg.x, progress_bg.y, int(progress_bg.width * progress), 6), border_radius=3)
+        elif self.exploration_complete:
+            guide_rect = pygame.Rect(SCREEN_WIDTH // 2 - 220, objective_y, 440, 46)
+            draw_panel(self.screen, guide_rect, GREEN, False)
+            guide = FONT_XS.render("主线完成  ·  东境核心已激活  ·  准备迎战", True, GREEN)
             self.screen.blit(guide, guide.get_rect(center=guide_rect.center))
 
     def draw_feedback_messages(self):
-        y = 190
+        y = 238
         for message in self.feedback_messages[-3:]:
             alpha = min(255, message['timer'] * 4)
             text = FONT_XS.render(message['text'], True, message['color'])

@@ -31,33 +31,54 @@ class Camera:
 
 
 class DungeonGenerator:
-    """简单的地牢生成器"""
+    """Generate a readable west-to-east main route with optional side rooms."""
 
     def generate(self, w, h):
         tiles = [[1] * w for _ in range(h)]  # 1=Wall, 0=Floor
-        rooms = []
+        main_rooms = []
+        route_count = 8
+        previous_y = random.randint(9, h - 10)
 
-        for _ in range(20):
-            rw = random.randint(6, 12)
-            rh = random.randint(6, 12)
-            rx = random.randint(1, w - rw - 1)
-            ry = random.randint(1, h - rh - 1)
+        # The critical path always advances east. Vertical movement changes
+        # gradually so the player reads it as a route instead of random noise.
+        for index in range(route_count):
+            rw = random.randint(7, 10)
+            rh = random.randint(7, 10)
+            center_x = int(5 + index * ((w - 10) / (route_count - 1)))
+            if index:
+                previous_y = max(6, min(h - 7, previous_y + random.randint(-7, 7)))
+            rx = max(1, min(w - rw - 1, center_x - rw // 2))
+            ry = max(1, min(h - rh - 1, previous_y - rh // 2))
+            room = pygame.Rect(rx, ry, rw, rh)
+            self.carve_room(tiles, room)
+            if main_rooms:
+                self.carve_tunnel(tiles, main_rooms[-1].center, room.center)
+            main_rooms.append(room)
 
-            new_room = pygame.Rect(rx, ry, rw, rh)
+        branch_rooms = []
+        for _ in range(10):
+            anchor = random.choice(main_rooms[1:-1])
+            rw = random.randint(6, 9)
+            rh = random.randint(6, 9)
+            side = random.choice((-1, 1))
+            center_x = anchor.centerx + random.randint(-5, 5)
+            center_y = anchor.centery + side * random.randint(9, 15)
+            rx = max(1, min(w - rw - 1, center_x - rw // 2))
+            ry = max(1, min(h - rh - 1, center_y - rh // 2))
+            room = pygame.Rect(rx, ry, rw, rh)
+            self.carve_room(tiles, room)
+            self.carve_tunnel(tiles, anchor.center, room.center)
+            branch_rooms.append(room)
 
-            # 挖空房间
-            for y in range(new_room.top, new_room.bottom):
-                for x in range(new_room.left, new_room.right):
-                    tiles[y][x] = 0
+        self.main_rooms = main_rooms
+        self.route_points = [room.center for room in main_rooms]
+        return tiles, main_rooms + branch_rooms
 
-            if rooms:
-                # 连接到上一个房间
-                prev = rooms[-1]
-                self.carve_tunnel(tiles, prev.center, new_room.center)
-
-            rooms.append(new_room)
-
-        return tiles, rooms
+    @staticmethod
+    def carve_room(tiles, room):
+        for y in range(room.top, room.bottom):
+            for x in range(room.left, room.right):
+                tiles[y][x] = 0
 
     def carve_tunnel(self, tiles, p1, p2):
         x1, y1 = int(p1[0]), int(p1[1])
