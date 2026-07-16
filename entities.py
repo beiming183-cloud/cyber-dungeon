@@ -21,23 +21,27 @@ class Entity:
 
     def move(self, tiles):
         """更稳健的物理移动系统"""
-        # X轴移动
-        self.rect.x += self.vx
-        hit_list = self.get_collisions(tiles)
-        for tile in hit_list:
-            if self.vx > 0:  # 向右撞墙
-                self.rect.right = tile.left
-            elif self.vx < 0:  # 向左撞墙
-                self.rect.left = tile.right
+        # Split fast movement into small steps so sprinting enemies and players
+        # cannot tunnel through a one-tile wall between frames.
+        steps = max(1, int(math.ceil(max(abs(self.vx), abs(self.vy)) / 4.0)))
+        step_x = self.vx / steps
+        step_y = self.vy / steps
+        for _ in range(steps):
+            self.rect.x += step_x
+            hit_list = self.get_collisions(tiles)
+            for tile in hit_list:
+                if step_x > 0:
+                    self.rect.right = tile.left
+                elif step_x < 0:
+                    self.rect.left = tile.right
 
-        # Y轴移动
-        self.rect.y += self.vy
-        hit_list = self.get_collisions(tiles)
-        for tile in hit_list:
-            if self.vy > 0:  # 向下撞墙
-                self.rect.bottom = tile.top
-            elif self.vy < 0:  # 向上撞墙
-                self.rect.top = tile.bottom
+            self.rect.y += step_y
+            hit_list = self.get_collisions(tiles)
+            for tile in hit_list:
+                if step_y > 0:
+                    self.rect.bottom = tile.top
+                elif step_y < 0:
+                    self.rect.top = tile.bottom
 
     def get_collisions(self, tiles):
         hits = []
@@ -1111,10 +1115,12 @@ class TreasureChest:
 
 class Projectile:
     def __init__(self, x, y, tx, ty, skill_data, char_type="cyber_mage"):
-        self.rect = pygame.Rect(x, y, 20, 20)
+        self.rect = pygame.Rect(0, 0, 20, 20)
+        self.rect.center = (int(x), int(y))
         angle = math.atan2(ty - y, tx - x)
         self.angle = angle
         self.skill_type = skill_data.get('type', 'normal')
+        self.visual_id = skill_data.get('visual_id', self.skill_type)
         self.char_type = char_type  # 角色类型
 
         self.effects = skill_data.get('effects', {})
@@ -1198,7 +1204,7 @@ class Projectile:
         self.pulse = 0  # 脉冲
 
         # 子弹图像
-        self.image = VisualUtils.create_skill_icon(skill_data.get('visual_id', self.skill_type), self.color, 24)
+        self.image = VisualUtils.create_skill_icon(self.visual_id, self.color, 24)
 
     def update(self):
         # 记录轨迹
@@ -1426,3 +1432,14 @@ class Projectile:
             # 默认 - 圆形
             pygame.draw.circle(surface, self.color, (int(cx), int(cy)), 6)
             pygame.draw.circle(surface, WHITE, (int(cx), int(cy)), 3)
+
+        # The authored skill mark is also used in combat. A bright core and a
+        # rotating icon keep even small, fast projectiles readable.
+        glow_radius = 15 + int(math.sin(math.radians(self.pulse)) * 2)
+        glow = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (*self.color[:3], 65), (glow_radius, glow_radius), glow_radius)
+        pygame.draw.circle(glow, (*self.color[:3], 135), (glow_radius, glow_radius), max(4, glow_radius // 2))
+        surface.blit(glow, (cx - glow_radius, cy - glow_radius), special_flags=pygame.BLEND_ADD)
+        rotation = -angle_deg if self.visual_id.startswith('basic_') else self.rotation
+        icon = pygame.transform.rotate(self.image, rotation)
+        surface.blit(icon, icon.get_rect(center=(cx, cy)))

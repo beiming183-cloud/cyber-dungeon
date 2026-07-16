@@ -143,7 +143,30 @@ class VisualUtils:
         # authored for one mechanic. No skill shares a recolored base mark.
         poly([(50, 3), (89, 25), (89, 75), (50, 97), (11, 75), (11, 25)], (*ink, 24))
 
-        if skill_id == 'pyro_orb':
+        if skill_id == 'basic_cyber_mage':
+            circle(50, 50, 21, ink, line)
+            circle(50, 50, 8, WHITE)
+            for angle in (0, 120, 240):
+                rad = math.radians(angle)
+                path([(50 + math.cos(rad) * 20, 50 + math.sin(rad) * 20),
+                      (50 + math.cos(rad) * 42, 50 + math.sin(rad) * 42)], bright, line)
+        elif skill_id == 'basic_mech_ranger':
+            poly([(7, 39), (70, 39), (94, 50), (70, 61), (7, 61)], ink)
+            path([(14, 50), (82, 50)], WHITE, line)
+            poly([(27, 25), (57, 25), (66, 39), (22, 39)], bright)
+        elif skill_id == 'basic_bio_berserker':
+            pygame.draw.arc(surf, ink, pygame.Rect(p(5, 5), p(90, 90)), .25, 3.0, line + 3)
+            poly([(8, 59), (3, 28), (32, 43)], bright)
+            path([(27, 74), (77, 24)], WHITE, line + 1)
+        elif skill_id == 'basic_shadow_assassin':
+            poly([(7, 75), (70, 12), (94, 6), (84, 31), (29, 89)], ink)
+            path([(17, 77), (80, 17)], WHITE, line)
+            path([(5, 43), (36, 43)], bright, line)
+        elif skill_id == 'basic_holy_knight':
+            poly([(43, 4), (57, 4), (62, 67), (50, 94), (38, 67)], bright)
+            path([(50, 12), (50, 82)], WHITE, line)
+            poly([(18, 41), (82, 41), (71, 57), (29, 57)], ink)
+        elif skill_id == 'pyro_orb':
             poly([(12, 73), (38, 55), (28, 49), (57, 37), (50, 27), (82, 32), (68, 45), (88, 51), (62, 58), (68, 71), (43, 65)], ink)
             circle(58, 49, 13, bright)
             circle(61, 46, 5, WHITE)

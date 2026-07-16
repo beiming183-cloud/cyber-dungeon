@@ -182,6 +182,7 @@ class Game:
 
         self.enemies = []
         self.projectiles = []
+        self.combat_effects = []
         self.items = []  # 重置道具列表
         self.mines = []  # 地雷列表
         self.decoys = []  # 分身列表
@@ -804,6 +805,7 @@ class Game:
             cx, cy = (world_x, world_y) if center == 'cursor' else self.player.rect.center
             radius = skill.get('radius', 150)
             damage = skill.get('damage', 50)
+            self.add_combat_effect('area', skill.get('color', WHITE), (cx, cy), radius=radius, width=5, duration=24)
             self.deal_area_damage(cx, cy, radius, damage, skill.get('effects'))
             self.camera.shake(5)
             return True
@@ -815,6 +817,8 @@ class Game:
             length = skill.get('range', 600)
             end_x = start_x + (dx / dist) * length
             end_y = start_y + (dy / dist) * length
+            self.add_combat_effect('beam', skill.get('color', WHITE), (start_x, start_y), (end_x, end_y),
+                                   width=max(4, skill.get('width', 40) // 5), duration=16)
             self.deal_line_damage(start_x, start_y, end_x, end_y, skill.get('width', 40),
                                   skill.get('damage', 80), skill.get('effects'))
             self.camera.shake(6)
@@ -827,6 +831,8 @@ class Game:
             length = skill.get('range', 400)
             end_x = start_x + (dx / dist) * length
             end_y = start_y + (dy / dist) * length
+            self.add_combat_effect('line', skill.get('color', WHITE), (start_x, start_y), (end_x, end_y),
+                                   width=max(4, skill.get('width', 80) // 8), duration=18)
             self.deal_line_damage(start_x, start_y, end_x, end_y, skill.get('width', 80),
                                   skill.get('damage', 70), skill.get('effects'))
             self.camera.shake(4)
@@ -836,12 +842,16 @@ class Game:
             self.player.blood_rage_timer = skill.get('duration', 480)
             self.player.damage_buff = skill.get('damage_bonus', 0.0)
             self.player.blood_rage_bonus = skill.get('lifesteal_bonus', 0.0)
+            self.add_combat_effect('aura', skill.get('color', RED), self.player.rect.center,
+                                   radius=90, width=6, duration=30)
             self.camera.shake(3)
             return True
 
         if behavior == 'buff_invincibility':
             self.player.guardian_aura_timer = skill.get('duration', 240)
             self.player.is_invincible = True
+            self.add_combat_effect('aura', skill.get('color', YELLOW), self.player.rect.center,
+                                   radius=110, width=7, duration=36)
             self.camera.shake(4)
             return True
 
@@ -853,6 +863,8 @@ class Game:
             radius = skill.get('radius', 150)
             duration = skill.get('duration', 300)
             damage = skill.get('damage', 10)
+            self.add_combat_effect('area', skill.get('color', PURPLE), (world_x, world_y),
+                                   radius=radius, width=5, duration=26)
             self.spawn_poison_field(world_x, world_y, radius, duration, damage)
             return True
 
@@ -861,6 +873,8 @@ class Game:
             return True
 
         if behavior == 'spawn_clone':
+            self.add_combat_effect('aura', skill.get('color', PURPLE), self.player.rect.center,
+                                   radius=75, width=4, duration=20)
             self.spawn_shadow_clones(skill.get('count', 1))
             return True
 
@@ -874,6 +888,8 @@ class Game:
             regen = skill.get('regen', 0)
             if regen:
                 self.player.hp = min(self.player.max_hp, self.player.hp + regen)
+            self.add_combat_effect('heal', skill.get('color', GREEN), self.player.rect.center,
+                                   radius=85, width=5, duration=30)
             self.camera.shake(2)
             return True
 
@@ -882,6 +898,36 @@ class Game:
     def fire_projectile(self, skill, target_x, target_y, force_basic=False):
         projectile_skill = dict(skill)
         projectile_skill['effects'] = dict(skill.get('effects', {}))
+        if force_basic:
+            basic_damage = {
+                'cyber_mage': 24,
+                'mech_ranger': 18,
+                'bio_berserker': 32,
+                'shadow_assassin': 27,
+                'holy_knight': 22,
+            }
+            projectile_skill.update({
+                'type': 'basic_shot',
+                'visual_id': 'basic_' + self.player.char_type,
+                'damage': basic_damage.get(self.player.char_type, 22),
+                'speed': 19,
+                'life': 70,
+                'effects': {},
+                'multi_count': 1,
+                'spread': 6,
+                'homing': False,
+                'pierce': False,
+            })
+        dx = target_x - self.player.rect.centerx
+        dy = target_y - self.player.rect.centery
+        aim_dist = math.hypot(dx, dy) or 1
+        muzzle_end = (
+            self.player.rect.centerx + dx / aim_dist * 44,
+            self.player.rect.centery + dy / aim_dist * 44,
+        )
+        self.add_combat_effect('muzzle', projectile_skill.get('color', self.player.color),
+                               self.player.rect.center, muzzle_end, width=4 if force_basic else 6,
+                               duration=8 if force_basic else 12)
         if projectile_skill.get('homing'):
             target = self.get_nearest_enemy()
             if target:
@@ -941,6 +987,87 @@ class Game:
         return min(alive_enemies, key=lambda e: math.hypot(e.rect.centerx - self.player.rect.centerx,
                                                           e.rect.centery - self.player.rect.centery))
 
+    def add_combat_effect(self, kind, color, start, end=None, radius=0, width=4, duration=18):
+        self.combat_effects.append({
+            'kind': kind,
+            'color': color[:3],
+            'start': (float(start[0]), float(start[1])),
+            'end': (float(end[0]), float(end[1])) if end else None,
+            'radius': float(radius),
+            'width': int(width),
+            'life': int(duration),
+            'max_life': int(duration),
+        })
+        self.combat_effects = self.combat_effects[-80:]
+
+    def update_combat_effects(self):
+        for effect in self.combat_effects:
+            effect['life'] -= 1
+        self.combat_effects = [effect for effect in self.combat_effects if effect['life'] > 0]
+
+    def draw_combat_effects(self):
+        if not self.combat_effects:
+            return
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        for effect in self.combat_effects:
+            life_ratio = effect['life'] / max(1, effect['max_life'])
+            progress = 1.0 - life_ratio
+            alpha = max(20, int(230 * life_ratio))
+            color = (*effect['color'], alpha)
+            sx, sy = self.camera.apply(*effect['start'])
+            start = (int(sx), int(sy))
+            kind = effect['kind']
+
+            if kind in ('beam', 'line', 'dash', 'muzzle') and effect['end']:
+                ex, ey = self.camera.apply(*effect['end'])
+                end = (int(ex), int(ey))
+                width = max(1, int(effect['width'] * life_ratio))
+                if kind == 'beam':
+                    pygame.draw.line(overlay, (*effect['color'], max(20, alpha // 3)), start, end, width + 18)
+                    pygame.draw.line(overlay, color, start, end, width + 8)
+                    pygame.draw.line(overlay, (255, 255, 255, alpha), start, end, max(2, width))
+                elif kind == 'dash':
+                    pygame.draw.line(overlay, color, start, end, width + 8)
+                    pygame.draw.line(overlay, (255, 255, 255, alpha), start, end, max(1, width // 2))
+                elif kind == 'muzzle':
+                    pygame.draw.line(overlay, color, start, end, width + 3)
+                    pygame.draw.circle(overlay, (255, 255, 255, alpha), start, max(2, width + 1))
+                else:
+                    pygame.draw.line(overlay, color, start, end, width + 4)
+                    for step in (0.2, 0.45, 0.7):
+                        px = int(start[0] + (end[0] - start[0]) * step)
+                        py = int(start[1] + (end[1] - start[1]) * step)
+                        pygame.draw.circle(overlay, (255, 255, 255, alpha), (px, py), max(1, width // 2))
+            elif kind in ('area', 'aura', 'heal'):
+                radius = max(4, int(effect['radius'] * (0.35 + progress * 0.65)))
+                pygame.draw.circle(overlay, color, start, radius, max(2, effect['width']))
+                pygame.draw.circle(overlay, (*effect['color'], max(15, alpha // 3)), start, max(3, radius - 8), 2)
+                if kind == 'heal':
+                    pygame.draw.line(overlay, (255, 255, 255, alpha), (start[0], start[1] - 13), (start[0], start[1] + 13), 4)
+                    pygame.draw.line(overlay, (255, 255, 255, alpha), (start[0] - 13, start[1]), (start[0] + 13, start[1]), 4)
+            else:  # hit / wall impact
+                radius = max(3, int(8 + progress * 18))
+                pygame.draw.circle(overlay, color, start, radius, 2)
+                for angle in range(0, 360, 45):
+                    rad = math.radians(angle)
+                    inner = (start[0] + int(math.cos(rad) * 4), start[1] + int(math.sin(rad) * 4))
+                    outer = (start[0] + int(math.cos(rad) * radius), start[1] + int(math.sin(rad) * radius))
+                    pygame.draw.line(overlay, color, inner, outer, 2)
+        self.screen.blit(overlay, (0, 0), special_flags=pygame.BLEND_ADD)
+
+    def rect_hits_wall(self, rect):
+        left = int(rect.left // TILE_SIZE)
+        right = int((rect.right - 1) // TILE_SIZE)
+        top = int(rect.top // TILE_SIZE)
+        bottom = int((rect.bottom - 1) // TILE_SIZE)
+        for tile_y in range(top, bottom + 1):
+            for tile_x in range(left, right + 1):
+                if tile_x < 0 or tile_y < 0 or tile_x >= self.map_w or tile_y >= self.map_h:
+                    return True
+                if self.tiles[tile_y][tile_x] == 1:
+                    return True
+        return False
+
     def deal_area_damage(self, cx, cy, radius, damage, effects=None):
         for enemy in self.enemies:
             if enemy.alive:
@@ -971,6 +1098,8 @@ class Game:
         dmg_bonus = 1.0 + getattr(self.player, 'damage_buff', 0.0)
         final_damage = int(damage * dmg_bonus)
         enemy.take_damage(final_damage)
+        self.add_combat_effect('hit', getattr(enemy, 'color', WHITE), enemy.rect.center,
+                               radius=24, width=3, duration=11)
         if self.player.char_type == "bio_berserker":
             lifesteal = self.player.apply_vampirism(final_damage)
             bonus = getattr(self.player, 'blood_rage_bonus', 0.0)
@@ -1007,13 +1136,27 @@ class Game:
         dx, dy = world_x - start_x, world_y - start_y
         dist = math.hypot(dx, dy) or 1
         dash_distance = skill.get('distance', 220)
-        end_x = start_x + (dx / dist) * dash_distance
-        end_y = start_y + (dy / dist) * dash_distance
+        direction_x, direction_y = dx / dist, dy / dist
+        end_x, end_y = start_x, start_y
+        # Sweep the complete dash path in four-pixel increments. The last free
+        # position becomes the destination, so dashes stop at walls.
+        steps = max(1, int(math.ceil(dash_distance / 4.0)))
+        for step in range(1, steps + 1):
+            travel = min(dash_distance, step * 4.0)
+            candidate = self.player.rect.copy()
+            candidate.center = (
+                int(start_x + direction_x * travel),
+                int(start_y + direction_y * travel),
+            )
+            if self.rect_hits_wall(candidate):
+                break
+            end_x, end_y = candidate.center
         width = skill.get('width', 60)
         damage = skill.get('damage', 60)
         self.deal_line_damage(start_x, start_y, end_x, end_y, width, damage, skill.get('effects'))
-        self.player.rect.centerx = int(max(TILE_SIZE, min(self.map_w * TILE_SIZE - TILE_SIZE, end_x)))
-        self.player.rect.centery = int(max(TILE_SIZE, min(self.map_h * TILE_SIZE - TILE_SIZE, end_y)))
+        self.add_combat_effect('dash', skill.get('color', self.player.color), (start_x, start_y), (end_x, end_y),
+                               width=max(5, width // 7), duration=18)
+        self.player.rect.center = (int(end_x), int(end_y))
         self.camera.shake(4)
 
     def spawn_poison_field(self, x, y, radius, duration, damage):
@@ -1048,10 +1191,19 @@ class Game:
         target = self.get_nearest_enemy()
         if not target:
             return
+        start = self.player.rect.center
         damage = skill.get('damage', 150)
         self.apply_damage_to_enemy(target, damage, skill.get('effects'))
-        self.player.rect.centerx = target.rect.centerx + 30
-        self.player.rect.centery = target.rect.centery - 30
+        destination = start
+        for offset_x, offset_y in ((36, -36), (-36, -36), (36, 36), (-36, 36), (0, -52), (0, 52)):
+            candidate = self.player.rect.copy()
+            candidate.center = (target.rect.centerx + offset_x, target.rect.centery + offset_y)
+            if not self.rect_hits_wall(candidate):
+                destination = candidate.center
+                break
+        self.add_combat_effect('dash', skill.get('color', PURPLE), start, target.rect.center,
+                               width=7, duration=15)
+        self.player.rect.center = destination
         self.camera.shake(6)
 
     def update(self):
@@ -1065,6 +1217,7 @@ class Game:
             update_count = int(self.game_speed) if self.game_speed >= 1.0 else 1
             for _ in range(update_count):
                 self.game_time += 1
+                self.update_combat_effects()
                 # 商店激活时，不更新玩家（保持位置不变，但需要清理拖尾）
                 if not self.shop_active:
                     self.player.update(self.tiles, self.particles)
@@ -1491,6 +1644,13 @@ class Game:
             # 更新投射物
             for p in self.projectiles[:]:
                 if not p.update():
+                    self.projectiles.remove(p)
+                    continue
+
+                # Projectiles now collide with dungeon geometry instead of
+                # flying through walls and damaging unseen enemies.
+                if self.rect_hits_wall(p.rect):
+                    self.add_combat_effect('wall', p.color, p.rect.center, radius=20, width=3, duration=10)
                     self.projectiles.remove(p)
                     continue
 
@@ -2313,6 +2473,7 @@ class Game:
         self.player.draw(self.screen, self.camera)
         for decoy in self.decoys: decoy.draw(self.screen, self.camera)  # 绘制分身
         for p in self.projectiles: p.draw(self.screen, self.camera)
+        self.draw_combat_effects()
         for p in self.particles: p.draw(self.screen, self.camera)
 
     def draw_ui(self):
