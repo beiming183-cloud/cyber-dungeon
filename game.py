@@ -167,7 +167,7 @@ class Game:
             self.current_map = 1
             
         gen = DungeonGenerator()
-        self.map_w, self.map_h = 60, 60
+        self.map_w, self.map_h = 180, 72
         self.tiles, self.rooms = gen.generate(self.map_w, self.map_h)
         self.route_rooms = getattr(gen, 'main_rooms', sorted(self.rooms, key=lambda room: room.centerx))
         self.route_points = [room.center for room in self.route_rooms]
@@ -258,7 +258,7 @@ class Game:
         """Place ordered objectives along the west-to-east critical route."""
         if len(self.route_rooms) <= 1:
             return
-        chest_count = min(len(self.route_rooms) - 1, 3 + getattr(self.player, 'extra_chests', 0))
+        chest_count = min(len(self.route_rooms) - 1, 5 + getattr(self.player, 'extra_chests', 0))
         last_index = len(self.route_rooms) - 1
         route_indices = []
         for stage in range(1, chest_count + 1):
@@ -272,7 +272,7 @@ class Game:
             else:
                 break
 
-        stage_names = ('前哨终端', '中继密库', '深层节点', '东境核心')
+        stage_names = ('边界哨站', '废墟中继', '裂谷节点', '深层档案', '东境核心', '隐秘主机')
         selected_rooms = [self.route_rooms[index] for index in route_indices]
         for index, room in enumerate(selected_rooms):
             chest = TreasureChest(room.centerx * TILE_SIZE, room.centery * TILE_SIZE)
@@ -283,6 +283,21 @@ class Game:
             chest.last_lock_notice = -9999
             self.treasure_chests.append(chest)
         self.objective_chests_total = len(self.treasure_chests)
+
+        # Optional side caches reward leaving the main corridor without
+        # hijacking the ordered objective flow.
+        branch_rooms = self.rooms[len(self.route_rooms):]
+        if branch_rooms:
+            ordered_branches = sorted(branch_rooms, key=lambda room: room.centerx)
+            cache_count = min(4, len(ordered_branches))
+            for index in range(cache_count):
+                branch_index = min(len(ordered_branches) - 1,
+                                   int((index + 0.5) * len(ordered_branches) / cache_count))
+                room = ordered_branches[branch_index]
+                cache = TreasureChest(room.centerx * TILE_SIZE, room.centery * TILE_SIZE)
+                cache.is_side_cache = True
+                cache.reward_type = 'coins' if index % 2 == 0 else 'recovery'
+                self.treasure_chests.append(cache)
 
     def get_current_route_target(self):
         route_targets = [
@@ -750,7 +765,11 @@ class Game:
             # 如果由于障碍导致没有生成敌人，直接进入下一波
             if spawned == 0:
                 fallback_kind = 'dragon' if self.boss_wave else random.choice(enemy_types)
-                fallback_enemy = Enemy(self.player.rect.centerx + 220, self.player.rect.centery, fallback_kind, False)
+                fallback_x, fallback_y = self.find_open_spawn_position(
+                    self.player.rect.centerx + 220,
+                    self.player.rect.centery,
+                )
+                fallback_enemy = Enemy(fallback_x, fallback_y, fallback_kind, False)
                 fallback_enemy.is_wave_enemy = True
                 if fallback_kind == 'dragon':
                     boss_scale = 1.0 + (self.current_wave // 5 - 1) * 0.35 + (self.current_map - 1) * 0.4
@@ -1091,6 +1110,20 @@ class Game:
                 if self.tiles[tile_y][tile_x] == 1:
                     return True
         return False
+
+    def find_open_spawn_position(self, world_x, world_y, size=40):
+        origin_x = int(world_x // TILE_SIZE)
+        origin_y = int(world_y // TILE_SIZE)
+        for radius in range(0, 14):
+            for tile_y in range(origin_y - radius, origin_y + radius + 1):
+                for tile_x in range(origin_x - radius, origin_x + radius + 1):
+                    if max(abs(tile_x - origin_x), abs(tile_y - origin_y)) != radius:
+                        continue
+                    candidate = pygame.Rect(0, 0, size, size)
+                    candidate.center = ((tile_x + 0.5) * TILE_SIZE, (tile_y + 0.5) * TILE_SIZE)
+                    if not self.rect_hits_wall(candidate):
+                        return candidate.x, candidate.y
+        return self.player.rect.x, self.player.rect.y
 
     def deal_area_damage(self, cx, cy, radius, damage, effects=None):
         for enemy in self.enemies:
@@ -1481,7 +1514,7 @@ class Game:
                                         self.vy = 0
                                 target = TempTarget(nearest_decoy.x, nearest_decoy.y)
                         
-                        e.ai_move(target, self.tiles)
+                        e.ai_move(target, self.tiles, self.enemies)
                         
                         # 应用重力场效果
                         for field in self.gravity_fields:
@@ -2528,48 +2561,53 @@ class Game:
         for p in self.particles: p.draw(self.screen, self.camera)
 
     def draw_route_world_guidance(self):
-        if not getattr(self, 'route_points', None):
+        target = self.get_current_route_target()
+        if not target:
             return
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        screen_points = [self.camera.apply(x * TILE_SIZE, y * TILE_SIZE) for x, y in self.route_points]
-        for index in range(len(screen_points) - 1):
-            start, end = screen_points[index], screen_points[index + 1]
-            color = GREEN if index < self.route_chests_opened else UI_PRIMARY
-            alpha = 75 if index < self.route_chests_opened else 42
-            pygame.draw.line(overlay, (*color[:3], alpha), start, end, 3)
-            dx, dy = end[0] - start[0], end[1] - start[1]
-            length = math.hypot(dx, dy) or 1
-            for distance in range(55, int(length), 90):
-                px = start[0] + dx / length * distance
-                py = start[1] + dy / length * distance
-                angle = math.atan2(dy, dx)
-                tip = (px + math.cos(angle) * 9, py + math.sin(angle) * 9)
-                left = (px + math.cos(angle + 2.45) * 7, py + math.sin(angle + 2.45) * 7)
-                right = (px + math.cos(angle - 2.45) * 7, py + math.sin(angle - 2.45) * 7)
-                pygame.draw.polygon(overlay, (*color[:3], min(150, alpha + 55)), [tip, left, right])
+        tx, ty = self.camera.apply(target.x, target.y)
+        px, py = self.camera.apply(*self.player.rect.center)
+        dx, dy = tx - px, ty - py
+        distance = math.hypot(dx, dy) or 1
+        angle = math.atan2(dy, dx)
 
-        target = self.get_current_route_target()
-        if target:
-            tx, ty = self.camera.apply(target.x, target.y)
-            pulse = int(8 * abs(math.sin(pygame.time.get_ticks() * 0.004)))
-            pygame.draw.circle(overlay, (*UI_ACCENT[:3], 120), (tx, ty), 42 + pulse, 3)
-            pygame.draw.line(overlay, (*UI_ACCENT[:3], 125), (tx, ty - 100), (tx, ty - 34), 3)
-            marker = [(tx, ty - 22), (tx - 10, ty - 40), (tx + 10, ty - 40)]
-            pygame.draw.polygon(overlay, (*UI_ACCENT[:3], 210), marker)
+        # Only two local chevrons are shown near the player. The dungeon itself
+        # remains unknown instead of being traced by a full-map polyline.
+        for step, alpha in ((88, 185), (158, 110)):
+            if step >= distance - 45:
+                continue
+            cx = px + math.cos(angle) * step
+            cy = py + math.sin(angle) * step
+            tip = (cx + math.cos(angle) * 11, cy + math.sin(angle) * 11)
+            left = (cx + math.cos(angle + 2.42) * 8, cy + math.sin(angle + 2.42) * 8)
+            right = (cx + math.cos(angle - 2.42) * 8, cy + math.sin(angle - 2.42) * 8)
+            pygame.draw.polygon(overlay, (*UI_PRIMARY[:3], alpha), [tip, left, right])
 
-            px, py = self.camera.apply(*self.player.rect.center)
-            dx, dy = tx - px, ty - py
-            distance = math.hypot(dx, dy) or 1
-            angle = math.atan2(dy, dx)
-            for step in (80, 145, 210):
-                if step >= distance - 35:
-                    continue
-                cx = px + math.cos(angle) * step
-                cy = py + math.sin(angle) * step
-                tip = (cx + math.cos(angle) * 13, cy + math.sin(angle) * 13)
-                left = (cx + math.cos(angle + 2.45) * 10, cy + math.sin(angle + 2.45) * 10)
-                right = (cx + math.cos(angle - 2.45) * 10, cy + math.sin(angle - 2.45) * 10)
-                pygame.draw.polygon(overlay, (*UI_PRIMARY[:3], 170), [tip, left, right])
+        if 42 <= tx <= SCREEN_WIDTH - 42 and 42 <= ty <= SCREEN_HEIGHT - 42:
+            pulse = int(3 * abs(math.sin(pygame.time.get_ticks() * 0.005)))
+            pygame.draw.circle(overlay, (*UI_PRIMARY[:3], 115), (tx, ty), 30 + pulse, 2)
+            bracket = 13
+            for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+                corner_x = tx + sx * 25
+                corner_y = ty + sy * 25
+                pygame.draw.line(overlay, (*UI_PRIMARY[:3], 190), (corner_x, corner_y),
+                                 (corner_x - sx * bracket, corner_y), 2)
+                pygame.draw.line(overlay, (*UI_PRIMARY[:3], 190), (corner_x, corner_y),
+                                 (corner_x, corner_y - sy * bracket), 2)
+        else:
+            center_x, center_y = SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2
+            ray_x, ray_y = tx - center_x, ty - center_y
+            scale_x = (SCREEN_WIDTH / 2 - 58) / max(1, abs(ray_x))
+            scale_y = (SCREEN_HEIGHT / 2 - 72) / max(1, abs(ray_y))
+            scale = min(scale_x, scale_y)
+            edge_x = center_x + ray_x * scale
+            edge_y = center_y + ray_y * scale
+            edge_angle = math.atan2(ray_y, ray_x)
+            tip = (edge_x + math.cos(edge_angle) * 15, edge_y + math.sin(edge_angle) * 15)
+            left = (edge_x + math.cos(edge_angle + 2.45) * 12, edge_y + math.sin(edge_angle + 2.45) * 12)
+            right = (edge_x + math.cos(edge_angle - 2.45) * 12, edge_y + math.sin(edge_angle - 2.45) * 12)
+            pygame.draw.polygon(overlay, (*UI_PRIMARY[:3], 220), [tip, left, right])
+            pygame.draw.circle(overlay, (*UI_PRIMARY[:3], 100), (int(edge_x), int(edge_y)), 25, 2)
         self.screen.blit(overlay, (0, 0))
 
     def draw_ui(self):

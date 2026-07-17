@@ -36,7 +36,7 @@ class DungeonGenerator:
     def generate(self, w, h):
         tiles = [[1] * w for _ in range(h)]  # 1=Wall, 0=Floor
         main_rooms = []
-        route_count = 8
+        route_count = 18
         previous_y = random.randint(9, h - 10)
 
         # The critical path always advances east. Vertical movement changes
@@ -56,7 +56,7 @@ class DungeonGenerator:
             main_rooms.append(room)
 
         branch_rooms = []
-        for _ in range(10):
+        for _ in range(24):
             anchor = random.choice(main_rooms[1:-1])
             rw = random.randint(6, 9)
             rh = random.randint(6, 9)

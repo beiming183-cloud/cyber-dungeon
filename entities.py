@@ -697,6 +697,10 @@ class Enemy(Entity):
             # Keep the imposing 96px art while using a corridor-safe hitbox.
             self.rect.size = (56, 56)
             self.rect.center = center
+        else:
+            center = self.rect.center
+            self.rect.size = (32, 32)
+            self.rect.center = center
         icon_size = 96 if kind == 'dragon' else 50 if is_elite else 40
         self.image = VisualUtils.create_enemy_icon(kind, color, icon_size, is_elite)
         self.damage = damage
@@ -723,6 +727,10 @@ class Enemy(Entity):
         self.path_tiles = []
         self.path_recalc_timer = 0
         self.last_target_tile = None
+        self.stuck_frames = 0
+        self.unstuck_timer = 0
+        self.unstuck_sign = random.choice((-1, 1))
+        self.separation_angle = random.uniform(0, math.pi * 2)
 
     @staticmethod
     def _walkable_tile(tiles, tile_x, tile_y):
@@ -742,7 +750,7 @@ class Enemy(Entity):
         came_from = {start: None}
         cost_so_far = {start: 0}
         visited = 0
-        while frontier and visited < 1200:
+        while frontier and visited < 5000:
             _, current = heapq.heappop(frontier)
             visited += 1
             if current == goal:
@@ -787,7 +795,7 @@ class Enemy(Entity):
             return dx, dy
         return target.rect.centerx - self.rect.centerx, target.rect.centery - self.rect.centery
 
-    def ai_move(self, target, tiles):
+    def ai_move(self, target, tiles, neighbors=None):
         # All enemies pursue the target across the full map. A cached A* route
         # supplies corridor waypoints so direct steering does not pin them into
         # walls or make distant enemies idle.
@@ -797,6 +805,32 @@ class Enemy(Entity):
         nav_dx, nav_dy = self._navigation_vector(target, tiles)
         nav_dist = math.hypot(nav_dx, nav_dy) or 1
         dx, dy, dist = nav_dx, nav_dy, nav_dist
+
+        if neighbors:
+            separation_x = 0.0
+            separation_y = 0.0
+            for other in neighbors:
+                if other is self or not other.alive:
+                    continue
+                away_x = self.rect.centerx - other.rect.centerx
+                away_y = self.rect.centery - other.rect.centery
+                neighbor_dist = math.hypot(away_x, away_y)
+                if neighbor_dist < 1:
+                    separation_x += math.cos(self.separation_angle)
+                    separation_y += math.sin(self.separation_angle)
+                elif neighbor_dist < 52:
+                    strength = (52 - neighbor_dist) / 52
+                    separation_x += away_x / neighbor_dist * strength
+                    separation_y += away_y / neighbor_dist * strength
+            if separation_x or separation_y:
+                dx = dx / dist + separation_x * 1.35
+                dy = dy / dist + separation_y * 1.35
+                dist = math.hypot(dx, dy) or 1
+
+        if self.unstuck_timer > 0:
+            self.unstuck_timer -= 1
+            dx, dy = -nav_dy * self.unstuck_sign, nav_dx * self.unstuck_sign
+            dist = math.hypot(dx, dy) or 1
 
         if self.stun_timer > 0:
             self.stun_timer -= 1
@@ -875,7 +909,19 @@ class Enemy(Entity):
                 self.take_damage(max(1, self.poison_damage))
                 self.poison_tick = 0
         
+        old_center = self.rect.center
         self.move(tiles)
+        moved = math.hypot(self.rect.centerx - old_center[0], self.rect.centery - old_center[1])
+        if direct_dist > 80 and math.hypot(self.vx, self.vy) > 0.1 and moved < 0.5:
+            self.stuck_frames += 1
+        else:
+            self.stuck_frames = max(0, self.stuck_frames - 2)
+        if self.stuck_frames > 36:
+            self.stuck_frames = 0
+            self.path_recalc_timer = 0
+            self.path_tiles = []
+            self.unstuck_sign *= -1
+            self.unstuck_timer = 24
         self.anim_frame = (self.anim_frame + 1) % 60
         self.pulse = (self.pulse + 2) % 360
         self.particle_timer += 1
@@ -1042,10 +1088,11 @@ class Enemy(Entity):
             else:
                 surface.blit(scaled_img, scaled_rect)
         else:
+            image_rect = self.image.get_rect(center=(cx, cy + float_offset))
             if self.hurt_timer > 0:
-                surface.blit(self.image, draw_pos, special_flags=pygame.BLEND_ADD)
+                surface.blit(self.image, image_rect, special_flags=pygame.BLEND_ADD)
             else:
-                surface.blit(self.image, draw_pos)
+                surface.blit(self.image, image_rect)
 
 
 class Item:
@@ -1195,32 +1242,33 @@ class TreasureChest:
         return True
     
     def draw(self, surface, camera):
-        # 获取相机偏移后的位置
         cx, cy = camera.apply(self.x, self.y + self.bob_offset)
         locked = getattr(self, 'route_locked', False)
-        chest_color = (80, 100, 125) if locked else YELLOW
-
-        glow_size = 40 + 8 * math.sin(self.pulse)
-        glow_surf = pygame.Surface((glow_size * 2, glow_size * 2), pygame.SRCALPHA)
-        pygame.draw.circle(glow_surf, (*chest_color[:3], 55 if locked else 150), (glow_size, glow_size), glow_size)
-        surface.blit(glow_surf, (cx - glow_size, cy - glow_size))
-        
-        # 绘制宝箱图标
-        icon_surf = VisualUtils.create_chest_icon(chest_color, 50)
-        surface.blit(icon_surf, (cx - 25, cy - 25))
-
-        if locked:
-            lock_body = pygame.Rect(cx - 7, cy - 3, 14, 12)
-            pygame.draw.rect(surface, (190, 205, 225), lock_body, border_radius=2)
-            pygame.draw.arc(surface, (190, 205, 225), (cx - 6, cy - 12, 12, 14), math.pi, math.pi * 2, 3)
-            pygame.draw.circle(surface, (35, 43, 58), (cx, cy + 2), 2)
-        
-        # 绘制闪光效果
-        if not self.opened and not locked:
-            flash_size = 30 + 5 * math.sin(self.pulse * 2)
-            flash_surf = pygame.Surface((flash_size * 2, flash_size * 2), pygame.SRCALPHA)
-            pygame.draw.circle(flash_surf, (*WHITE[:3], 100), (flash_size, flash_size), flash_size // 2)
-            surface.blit(flash_surf, (cx - flash_size, cy - flash_size))
+        if hasattr(self, 'route_order'):
+            color = (75, 92, 112) if locked else NEON_BLUE
+            pulse = 2 + int(abs(math.sin(self.pulse)) * 3)
+            glow = pygame.Surface((64, 64), pygame.SRCALPHA)
+            pygame.draw.circle(glow, (*color[:3], 38 if locked else 72), (32, 32), 23 + pulse)
+            surface.blit(glow, (cx - 32, cy - 32))
+            pygame.draw.rect(surface, (13, 19, 30), (cx - 15, cy - 12, 30, 28), border_radius=3)
+            pygame.draw.rect(surface, color, (cx - 15, cy - 12, 30, 28), 2, border_radius=3)
+            pygame.draw.polygon(surface, color, [(cx, cy - 24), (cx + 11, cy - 10), (cx, cy + 4), (cx - 11, cy - 10)], 2)
+            pygame.draw.circle(surface, WHITE if not locked else (160, 175, 190), (cx, cy - 10), 4)
+            pygame.draw.line(surface, color, (cx - 20, cy + 18), (cx + 20, cy + 18), 3)
+            if locked:
+                pygame.draw.rect(surface, (175, 190, 205), (cx - 6, cy - 2, 12, 10), border_radius=2)
+                pygame.draw.arc(surface, (175, 190, 205), (cx - 5, cy - 10, 10, 12), math.pi, math.pi * 2, 2)
+        else:
+            side_cache = getattr(self, 'is_side_cache', False)
+            color = GREEN if side_cache else YELLOW
+            glow_size = 29 if side_cache else 38
+            glow_surf = pygame.Surface((glow_size * 2, glow_size * 2), pygame.SRCALPHA)
+            pygame.draw.circle(glow_surf, (*color[:3], 75 if side_cache else 125),
+                               (glow_size, glow_size), glow_size)
+            surface.blit(glow_surf, (cx - glow_size, cy - glow_size))
+            icon_size = 38 if side_cache else 48
+            icon_surf = VisualUtils.create_chest_icon(color, icon_size)
+            surface.blit(icon_surf, (cx - icon_size // 2, cy - icon_size // 2))
 
 
 class Projectile:
